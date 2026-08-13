@@ -10,13 +10,22 @@ Fifth Frontier War are different in kind:
     *where fleets go*.
 
 ``train_value_network``
-    Self-play regression.  Games are played, every position is recorded with
-    the final victory margin as its label, and a small MLP is fitted to predict
-    it.  The resulting network drives ``NeuralAgent``, which uses it to decide
-    *how hard to press* -- when to gamble and when to consolidate.
+    Regression on played games.  Every position is recorded with the final
+    victory margin as its label and a small MLP is fitted to predict it.  The
+    resulting network drives ``NeuralAgent``, which uses it to decide *how hard
+    to press* -- when to gamble and when to consolidate.
 
 Both are deliberately cheap: a whole game runs in a few seconds, so a useful
 training run finishes inside a notebook cell.
+
+A warning about the second one.  Every position in a game carries that game's
+final margin, so the independent sample size is the number of *games*, not the
+number of positions -- a few dozen games is a few dozen samples however many
+thousand rows the training matrix has.  At that size the fit is weak and its
+measured quality is unstable: ``evaluator_report`` returns a bootstrap interval
+over games precisely so this is visible rather than hidden behind a
+reassuringly small regression loss.  Treat the network as a rough thermostat,
+not an oracle, and raise the game count a long way before trusting it further.
 """
 
 from __future__ import annotations
@@ -30,8 +39,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import features
-from .agents import (HeuristicAgent, NeuralAgent, ScriptedAgent, ValueNetwork,
-                     WEIGHTS, weight_dict, weight_vector)
+from .agents import (HeuristicAgent, NeuralAgent, RandomAgent, ScriptedAgent,
+                     ValueNetwork, WEIGHTS, weight_dict, weight_vector)
 from .engine import new_game, play
 from .state import IMPERIAL, ZHODANI
 
@@ -158,27 +167,61 @@ def state_side(side: str) -> str:
 
 
 # --------------------------------------------------------------------------
-def train_value_network(games: int = 12, epochs: int = 60, hidden: int = 32,
+def train_value_network(games: int = 18, epochs: int = 80, hidden: int = 12,
                         seed: int = 0, network: ValueNetwork | None = None,
                         max_turns: int = 45, agents=None, progress=None,
                         side: str = ZHODANI, weights: dict | None = None):
-    """Self-play regression: predict the final margin from a position.
+    """Regression on played games: predict the final margin from a position.
 
-    The network is side-agnostic -- ``features.perspective`` flips the vector
-    and ``NeuralAgent`` negates the score for the Imperium -- but which side
-    the learning agent plays still shapes the positions it sees, so ``side``
-    puts the ``NeuralAgent`` on the side being trained.
+    One network serves both players -- ``features.perspective`` flips the state
+    vector and ``NeuralAgent`` negates the score for the Imperium -- so games
+    are collected from both seats.  ``side`` chooses whose doctrine weights are
+    jittered to generate the learner's play, not which seat is sampled.
+
+    Returns ``(network, final_training_loss)``.  The loss is not a measure of
+    quality: see ``evaluator_report`` for that, and read the module docstring
+    for why the two differ so much here.
     """
     net = network or ValueNetwork(hidden=hidden, seed=seed)
+    rng = np.random.default_rng(seed)
     xs: list[np.ndarray] = []
     ys: list[float] = []
+    margins: list[float] = []
+
+    # Two things have to be right or the fit is worthless.
+    #
+    # Outcome spread: self-play against one fixed opponent produces games that
+    # all end the same way, and a regression on near-identical labels just
+    # learns their mean.  So the opponent is varied and the learner's own
+    # doctrine is jittered.
+    #
+    # Distribution match: training only on NeuralAgent games and then using the
+    # network to judge ordinary heuristic games gives *negative* held-out
+    # correlation -- the network learns the quirks of one agent's trajectories.
+    # So the learner's own seat alternates between the network agent and the
+    # standard doctrines, which is the mix the evaluator actually meets.
+    opponents = [RandomAgent, HeuristicAgent, ScriptedAgent]
+
     for g in range(games):
         match_seed = seed * 7919 + g
         if agents is None:
-            learner = NeuralAgent(side, network=net, weights=weights,
-                                  seed=match_seed + 1)
-            other = ScriptedAgent(state_side(side), seed=match_seed)
-            imperial, zhodani = ((other, learner) if side == ZHODANI
+            base = np.asarray(weight_vector(weights))
+            jitter = rng.normal(0.0, 0.35, len(base))
+            # One network serves both players, so it is trained on a balanced
+            # mixture of seats.  Collecting only from one seat gave a network
+            # that predicted that seat's games well and the other seat's
+            # backwards.
+            seat = side if g % 2 == 0 else state_side(side)
+            if g % 4 < 2:
+                learner = NeuralAgent(seat, network=net,
+                                      weights=weight_dict(base + jitter),
+                                      seed=match_seed + 1)
+            else:
+                learner = opponents[(g // 2) % len(opponents)](
+                    seat, seed=match_seed + 1)
+            other = opponents[g % len(opponents)](state_side(seat),
+                                                  seed=match_seed)
+            imperial, zhodani = ((other, learner) if seat == ZHODANI
                                  else (learner, other))
         else:
             imperial, zhodani = agents(match_seed)
@@ -186,6 +229,7 @@ def train_value_network(games: int = 12, epochs: int = 60, hidden: int = 32,
                                                seed=match_seed,
                                                max_turns=max_turns, record=True)
         label = math.tanh(margin / 200.0)
+        margins.append(margin)
         for vector in positions:
             xs.append(features.perspective(vector, ZHODANI))
             ys.append(label)
@@ -195,8 +239,79 @@ def train_value_network(games: int = 12, epochs: int = 60, hidden: int = 32,
         return net, 0.0
     x = np.asarray(xs)
     y = np.asarray(ys)
-    loss = net.train(x, y, epochs=epochs, seed=seed)
+    loss = net.train(x, y, epochs=epochs, lr=0.03, seed=seed)
+    net.label_spread = float(np.std(y))          # type: ignore[attr-defined]
+    net.margin_spread = float(np.std(margins))   # type: ignore[attr-defined]
     return net, loss
+
+
+def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
+                     max_turns: int = 30):
+    """How well the network predicts outcomes on games it was not trained on.
+
+    A regression loss near zero means nothing if every training label was the
+    same, and hand-built probe positions do not help either: setting eighty
+    worlds to Zhodani control on turn 1 is a position no game ever reaches, so
+    scoring it measures extrapolation rather than judgement.  The honest test
+    is held-out games -- play some, and see whether the network's opinion of
+    each position correlates with how that game actually ended.
+
+    Returns the correlation, the spread of predictions (near zero means the
+    network has collapsed onto the mean), and the mean absolute error.
+    """
+    xs: list[np.ndarray] = []
+    ys: list[float] = []
+    game_of: list[int] = []
+    opponents = [RandomAgent, HeuristicAgent, ScriptedAgent]
+    for g in range(games):
+        match_seed = seed * 31 + g
+        imperial = opponents[g % len(opponents)](IMPERIAL, seed=match_seed)
+        zhodani = opponents[(g + 1) % len(opponents)](ZHODANI, seed=match_seed + 1)
+        margin, _, positions = play_match(imperial, zhodani, seed=match_seed,
+                                          max_turns=max_turns, record=True)
+        label = math.tanh(margin / 200.0)
+        for vector in positions:
+            xs.append(features.perspective(vector, ZHODANI))
+            ys.append(label)
+            game_of.append(g)
+    if len(xs) < 3:
+        return {"correlation": 0.0, "spread": 0.0, "mae": 0.0, "positions": 0,
+                "games": games, "ci": (0.0, 0.0)}
+    predictions = np.array([net(v) for v in xs])
+    labels = np.asarray(ys)
+    groups = np.asarray(game_of)
+
+    def corr(mask) -> float:
+        p, l = predictions[mask], labels[mask]
+        if p.std() < 1e-9 or l.std() < 1e-9:
+            return 0.0
+        return float(np.corrcoef(p, l)[0, 1])
+
+    correlation = corr(np.ones(len(predictions), dtype=bool))
+
+    # Every position in a game carries that game's final margin, so the
+    # independent sample size is the number of *games*, not positions.  A
+    # correlation over a handful of games is close to meaningless, and it will
+    # happily read +0.5 on one evaluation seed and -0.3 on the next.  Bootstrap
+    # over games so the reported uncertainty makes that visible.
+    rng = np.random.default_rng(seed)
+    ids = np.unique(groups)
+    samples = []
+    for _ in range(200):
+        drawn = rng.choice(ids, size=len(ids), replace=True)
+        mask = np.concatenate([np.flatnonzero(groups == d) for d in drawn])
+        p, l = predictions[mask], labels[mask]
+        if p.std() > 1e-9 and l.std() > 1e-9:
+            samples.append(float(np.corrcoef(p, l)[0, 1]))
+    low, high = (float(np.percentile(samples, 5)),
+                 float(np.percentile(samples, 95))) if samples else (0.0, 0.0)
+    return {"correlation": correlation,
+            "ci": (low, high),
+            "spread": float(predictions.std()),
+            "label_spread": float(labels.std()),
+            "mae": float(np.mean(np.abs(predictions - labels))),
+            "positions": len(xs),
+            "games": int(len(ids))}
 
 
 # --------------------------------------------------------------------------

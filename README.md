@@ -145,11 +145,36 @@ numpy MLP. `NeuralAgent` uses the network as a thermostat — consolidate when
 winning, press when losing — which learns *how hard to push*. Both are pure
 numpy; a trained agent is a small JSON file.
 
-The value network itself is side-agnostic: `features.perspective` flips the
-state vector so a single network serves both players, and `NeuralAgent` negates
-its score for the Imperium. The `side` argument to `train_value_network` decides
-which side the learning agent plays, and so which positions it sees, not which
-side the network can evaluate.
+The value network is side-agnostic: `features.perspective` flips the state
+vector so a single network serves both players, and `NeuralAgent` negates its
+score for the Imperium. Games are collected from both seats for that reason.
+
+**How much to trust the value network.** Not very much, at notebook scale, and
+the code is built to make that visible. Every position in a game is labelled
+with that game's final margin, so the independent sample size is the number of
+*games*, not positions — twenty games is twenty samples however many hundred
+rows the training matrix has. `evaluator_report` therefore scores the network on
+held-out games and bootstraps the correlation **over games**:
+
+```python
+from ffw.training import train_value_network, evaluator_report
+net, loss = train_value_network(games=20, seed=1)
+print(evaluator_report(net, games=8))
+# {'correlation': +0.27, 'ci': (-0.45, +0.73), 'spread': 0.09, ...}
+```
+
+Expect a positive point estimate with an interval straddling zero: the sign is
+probably right, the magnitude is not measurable from a handful of games. That is
+why `NeuralAgent` only nudges its doctrine with the network rather than choosing
+moves with it.
+
+Two earlier versions of this training loop were broken in ways the regression
+loss did not reveal, which is the reason the diagnostic exists at all. The first
+trained against a single fixed opponent, so every game ended the same way and
+the network learned the mean of a nearly constant label — a superb loss and no
+discrimination whatsoever. The second collected games from only one player's
+seat and scored the other seat's games *backwards*, at a held-out correlation of
+−0.49. In both cases the training loss looked excellent.
 
 `tools/train_reference_agents.py` regenerates the trained agents committed under
 `ffw/data/`.

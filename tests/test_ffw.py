@@ -9,6 +9,8 @@ import os
 import sys
 import unittest
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ffw import hexmap, oob, tables                                  # noqa: E402
@@ -432,3 +434,34 @@ class TestLearning(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestValueNetworkQuality(unittest.TestCase):
+    """The regression loss is not a quality measure; these guard the real one."""
+
+    def test_training_produces_a_spread_of_outcomes(self):
+        """A single fixed opponent gives near-identical labels and a useless fit."""
+        from ffw.training import train_value_network
+        net, _ = train_value_network(games=6, epochs=10, seed=2, max_turns=14)
+        self.assertGreater(net.margin_spread, 5.0,
+                           "games all ended alike: the labels carry no signal")
+
+    def test_evaluator_reports_game_level_uncertainty(self):
+        from ffw.training import train_value_network, evaluator_report
+        net, _ = train_value_network(games=4, epochs=10, seed=2, max_turns=12)
+        report = evaluator_report(net, games=3, seed=5, max_turns=12)
+        self.assertEqual(report["games"], 3)
+        self.assertGreater(report["positions"], report["games"])
+        low, high = report["ci"]
+        self.assertLessEqual(low, report["correlation"] + 1e-6)
+        self.assertGreaterEqual(high, report["correlation"] - 1e-6)
+
+    def test_network_serves_both_sides_symmetrically(self):
+        """One network evaluates both players; the perspective flip is its own inverse."""
+        from ffw.agents import ValueNetwork
+        from ffw import features
+        state = new_game(seed=17)
+        raw = features.extract(state)
+        self.assertTrue(np.allclose(
+            features.perspective(features.perspective(raw, IMPERIAL), IMPERIAL),
+            raw))

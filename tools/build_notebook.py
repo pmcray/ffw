@@ -68,7 +68,8 @@ from ffw.agents import (RandomAgent, HeuristicAgent, ScriptedAgent,
                         ValueNetwork, DEFAULT_WEIGHTS, WEIGHTS)
 from ffw.viz import GameRecorder, draw_map, plot_history, front_line, COLORS
 from ffw.training import (play_match, train_weights, train_value_network,
-                          tournament, save_agent, load_agent)
+                          tournament, save_agent, load_agent,
+                          evaluator_report)
 
 plt.rcParams['figure.facecolor'] = COLORS['background']
 print('ffw', ffw.__version__)"""),
@@ -380,18 +381,45 @@ for _, k in delta[:6]:
 md("""### Training the value network by self-play"""),
 
 code("""t0 = time.time()
-net, loss = train_value_network(games=6, epochs=50, seed=3, max_turns=32,
+net, loss = train_value_network(games=14, epochs=80, seed=3, max_turns=30,
                                 progress=lambda g, m, r: print(
                                     '  game %d  margin %+7.1f  %s' % (g, m, r)))
-print('\\nfinal regression loss %.4f  (%.0fs)' % (loss, time.time() - t0))
+print('\\ntraining loss %.4f, margin spread across games %.1f VP  (%.0fs)'
+      % (loss, net.margin_spread, time.time() - t0))"""),
 
-probe = ffw.new_game(seed=42)
-print('opening position evaluates to %+.3f (0 = even)'
-      % net(features.perspective(features.extract(probe), ZHODANI)))
-for h in ['2314', '2109', '1510']:
-    probe.world_map.get(h).control = ZHODANI
-print('after Regina, Efate and Jewell fall: %+.3f'
-      % net(features.perspective(features.extract(probe), ZHODANI)))"""),
+md("""The training loss is **not** a measure of quality here, and it is worth
+being clear about why.
+
+Every position in a game is labelled with that game's final margin, so the
+independent sample size is the number of *games*, not the number of positions.
+Fourteen games is fourteen samples, however many hundred rows the training
+matrix has. If all fourteen end in a Zhodani win by roughly the same amount,
+a network that ignores its input and always answers "+120" scores an
+excellent loss while knowing nothing.
+
+So measure it on games it has never seen, and report the uncertainty."""),
+
+code("""report = evaluator_report(net, games=8, seed=99, max_turns=30)
+print('held-out: %d games, %d positions' % (report['games'], report['positions']))
+print('correlation with the eventual result: %+.3f' % report['correlation'])
+print('90%% bootstrap interval over games:    [%+.2f, %+.2f]'
+      % report['ci'])
+print('spread of predictions: %.3f   (near 0 means it has collapsed to a constant)'
+      % report['spread'])
+print('mean absolute error:   %.3f' % report['mae'])"""),
+
+md("""Expect a positive point estimate with an interval that comfortably
+straddles zero. That is the honest state of this evaluator at notebook scale:
+the sign is probably right, the magnitude is not measurable from eight games.
+`NeuralAgent` therefore uses it only to nudge its doctrine — the `gain`
+argument scales how much — rather than to choose moves outright.
+
+Getting a network worth trusting means hundreds of games, which is a
+background job rather than a notebook cell. Two earlier versions of this cell
+were quietly broken in ways the loss did not reveal: one trained on a single
+opponent, so every label was nearly identical and the network learned their
+mean; the next trained on one player's seat and scored the other seat's games
+*backwards*. Both looked fine by their training loss."""),
 
 code("""save_agent('trained_zhodani_notebook.json', best_weights, net,
            {'trained_in': 'notebook', 'side': ZHODANI})
