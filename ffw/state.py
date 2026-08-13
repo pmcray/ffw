@@ -385,6 +385,11 @@ class GameState:
                 continue
             if self.garrison_strength(hex_id, side) >= world.garrison_required():
                 world.control = side
+            elif (world.atmosphere == "vacuum" and world.defense_current == 0
+                  and any(s.attack > 0 for s in self.squadrons_at(hex_id, side))):
+                # rule 5: a surrendered airless world may be garrisoned by any
+                # squadron with an attack factor greater than zero
+                world.control = side
         # a world whose garrison lapses reverts to its original owner
         if world.control is not None and world.control != original:
             if self.garrison_strength(hex_id, world.control) < world.garrison_required():
@@ -411,7 +416,9 @@ class GameState:
                 points[ZHODANI] += world.victory_points
             elif origin != "imperial" and holder == IMPERIAL:
                 points[IMPERIAL] += world.victory_points
-        # Esalin counts as an enemy world for both players
+        # Rule 8: Esalin's co-dominium status makes it an enemy world for both
+        # players, so it is worth its full tech level rather than the half a
+        # neutral world earns.  The loop above has already paid the half.
         esalin = next((w for w in self.world_map if w.name == "Esalin"), None)
         if esalin is not None and esalin.control is not None:
             points[esalin.control] += esalin.tech_level / 2.0

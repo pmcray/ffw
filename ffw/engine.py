@@ -964,7 +964,9 @@ class Engine:
             if not targets:
                 return
             sq = self.agents[side].choose_loss(s, side, targets, remaining, self)
-            remaining -= sq.damage_value()
+            # every squadron is worth at least one defence factor, so this
+            # always terminates even if an agent returns an odd choice
+            remaining -= max(1, sq.damage_value())
             if sq.reduced or sq.cls.reduced is None:
                 for uid in list(sq.troops):
                     if uid in s.troops:
@@ -1087,16 +1089,16 @@ class Engine:
                 if world.sdb_current > 0 and passive:
                     world.sdb_losses = min(100, world.sdb_losses)
 
-        # surface bombing
-        for side, squadrons in attackers.items():
-            if side in engaged_out or not squadrons:
+        # surface bombing: squadrons may not bomb while enemy SDBs are active,
+        # and SDBs bomb at one tenth of their current strength
+        for side in (IMPERIAL, ZHODANI):
+            if side in engaged_out:
                 continue
-            enemy_sdb = (world.sdb_current > 0 and defender is not None
-                         and defender != side)
-            if enemy_sdb:
-                continue
-            bombard = sum(sq.bombard for sq in squadrons
-                          if sq.uid not in black_globe_used or True)
+            bombard = 0
+            if world.sdb_current == 0 or defender is None or defender == side:
+                bombard += sum(sq.bombard for sq in s.squadrons_at(hex_id, side))
+            if defender == side and world.sdb_current > 0:
+                bombard += world.sdb_current // 10
             if bombard <= 0:
                 continue
             targets = self.agents[side].bombing_targets(s, side, hex_id,

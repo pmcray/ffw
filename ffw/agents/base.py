@@ -49,7 +49,13 @@ class Agent:
                 continue
             if not world.base or world.control != side:
                 continue
-            if world.owner not in ("imperial",) and side == IMPERIAL:
+            # rule 6: rebuilding happens at a friendly base inside the borders
+            # of the squadron's own state
+            home = {"imperial": ("imperial",),
+                    "zhodani": ("zhodani",),
+                    "sword_worlds": ("sword_worlds",),
+                    "vargr": ("vargr",)}[sq.navy]
+            if world.owner not in home:
                 continue
             if sq.cls.kind == "scout" and not world.naval_base and not world.scout_base:
                 continue

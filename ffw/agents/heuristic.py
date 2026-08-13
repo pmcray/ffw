@@ -92,7 +92,7 @@ class HeuristicAgent(Agent):
                           dest: str, carrying: int = 0) -> float:
         world = state.world_map.get(dest)
         if world is None:
-            return -1e9
+            return self._score_box(state, side, origin, dest, carrying)
         w = self.w
         enemy = state.enemy_of(side)
         score = 0.0
@@ -164,6 +164,28 @@ class HeuristicAgent(Agent):
         score += w["frontier_pull"] * (1.0 - min(1.0, near / 8.0))
         return score
 
+    def _score_box(self, state: GameState, side: str, origin: str,
+                   dest: str, carrying: int) -> float:
+        """Worth of a run back to a reinforcement box to pick up new squadrons.
+
+        Squadrons arriving in a box cannot move without a fleet marker, and
+        markers are finite, so a fleet that has nothing better to do should go
+        and collect them.
+        """
+        from ..engine import REINFORCEMENT_BOXES
+        if REINFORCEMENT_BOXES.get(dest) != side:
+            return -1e9
+        waiting = sum(1 for sq in state.squadrons.values()
+                      if sq.location == dest and sq.fleet is None
+                      and sq.cls.kind != "scout")
+        if waiting == 0 or carrying > 0:
+            return -1e9
+        entry = state.world_map.entry_hexes.get(dest)
+        far = hexmap.distance(origin, entry) if entry else 6
+        return (self.w["own_support"] * min(3.0, waiting / 3.0)
+                + self.w["distance"] * far / 3.0
+                + self.w["refuel"] * 0.5)
+
     def _distance_to_front(self, state: GameState, side: str, dest: str) -> int:
         cache = self._front_cache
         if cache is None or cache[0] is not state.turn:
@@ -222,6 +244,16 @@ class HeuristicAgent(Agent):
             elif troops and can_refuel_at(state, side, h, classes,
                                           expect_control=True):
                 out.append(h)          # an invasion that expects to take the world
+        # a friendly reinforcement box is always a legal, always-fuelled
+        # destination, one jump further than its entry hex
+        from ..engine import REINFORCEMENT_BOXES
+        for box, owner in REINFORCEMENT_BOXES.items():
+            if owner != side:
+                continue
+            entry = state.world_map.entry_hexes.get(box)
+            if entry and (origin == entry
+                          or hexmap.distance(origin, entry) + 1 <= jump):
+                out.append(box)
         return out
 
     def _needs_a_turn_to_refuel(self, state, fleet) -> bool:
