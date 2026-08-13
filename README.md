@@ -145,6 +145,12 @@ numpy MLP. `NeuralAgent` uses the network as a thermostat — consolidate when
 winning, press when losing — which learns *how hard to push*. Both are pure
 numpy; a trained agent is a small JSON file.
 
+The value network itself is side-agnostic: `features.perspective` flips the
+state vector so a single network serves both players, and `NeuralAgent` negates
+its score for the Imperium. The `side` argument to `train_value_network` decides
+which side the learning agent plays, and so which positions it sees, not which
+side the network can evaluate.
+
 `tools/train_reference_agents.py` regenerates the trained agents committed under
 `ffw/data/`.
 

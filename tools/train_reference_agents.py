@@ -40,6 +40,7 @@ def main(generations=6, population=10, elite=4, games=1, net_games=8,
         print("== self-play value network for %s ==" % side, flush=True)
         net, loss = train_value_network(
             games=net_games, epochs=60, seed=7, max_turns=max_turns,
+            side=side, weights=weights,
             progress=lambda g, m, r: print("   game %d  margin %+7.1f  %s"
                                            % (g, m, r), flush=True))
         path = os.path.join(DATA, filename)

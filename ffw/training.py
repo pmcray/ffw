@@ -134,16 +134,26 @@ def state_side(side: str) -> str:
 # --------------------------------------------------------------------------
 def train_value_network(games: int = 12, epochs: int = 60, hidden: int = 32,
                         seed: int = 0, network: ValueNetwork | None = None,
-                        max_turns: int = 45, agents=None, progress=None):
-    """Self-play regression: predict the final margin from a position."""
+                        max_turns: int = 45, agents=None, progress=None,
+                        side: str = ZHODANI, weights: dict | None = None):
+    """Self-play regression: predict the final margin from a position.
+
+    The network is side-agnostic -- ``features.perspective`` flips the vector
+    and ``NeuralAgent`` negates the score for the Imperium -- but which side
+    the learning agent plays still shapes the positions it sees, so ``side``
+    puts the ``NeuralAgent`` on the side being trained.
+    """
     net = network or ValueNetwork(hidden=hidden, seed=seed)
     xs: list[np.ndarray] = []
     ys: list[float] = []
     for g in range(games):
         match_seed = seed * 7919 + g
         if agents is None:
-            imperial = ScriptedAgent(IMPERIAL, seed=match_seed)
-            zhodani = NeuralAgent(ZHODANI, network=net, seed=match_seed + 1)
+            learner = NeuralAgent(side, network=net, weights=weights,
+                                  seed=match_seed + 1)
+            other = ScriptedAgent(state_side(side), seed=match_seed)
+            imperial, zhodani = ((other, learner) if side == ZHODANI
+                                 else (learner, other))
         else:
             imperial, zhodani = agents(match_seed)
         margin, result, positions = play_match(imperial, zhodani,
