@@ -318,8 +318,12 @@ md("""## 5. Training an AI
 Two things are worth learning, and they need different methods.
 
 **Doctrine weights — cross-entropy method.** A population of candidate weight
-vectors each plays a game; the best few are kept and the sampling distribution
-is refitted to them. This learns *where fleets should go*.
+vectors each plays the same fixed set of games; the best few are kept and the
+sampling distribution is refitted to them. This learns *where fleets should go*.
+Two details matter on a game this noisy: every candidate is judged on identical
+game seeds, and the centre of the search only moves when a proposal actually
+beats the incumbent on those same games. Without the second rule the search
+walks downhill whenever an elite sample got lucky, which is most of the time.
 
 **Position evaluation — self-play regression.** Games are played and every
 position is labelled with the eventual victory margin; a small MLP is fitted to
@@ -341,12 +345,24 @@ best_weights, log = train_weights(
               % (g, mean, best, time.time() - t0))))
 print('\\ndone in %.0fs' % (time.time() - t0))"""),
 
+md("""Read the **incumbent** line, not the other two. A single game of Fifth
+Frontier War varies by tens of victory points on the dice alone, so the best
+sampled candidate in a generation is mostly a measure of who got lucky. The
+incumbent is the accepted centre of the search, re-scored on the same fixed set
+of games every generation, and it only moves when a proposal actually beats it
+— so it can only go up."""),
+
 code("""gen, mean, best = log.to_arrays()
+_, incumbent = log.incumbents()
 fig, ax = plt.subplots(figsize=(9, 4))
 fig.patch.set_facecolor(COLORS['background'])
 ax.set_facecolor(COLORS['background'])
-ax.plot(gen, mean, label='population mean', color=COLORS['neutral'], marker='o')
-ax.plot(gen, best, label='best candidate', color=COLORS['zhodani'], marker='o')
+ax.plot(gen, mean, label='population mean', color=COLORS['neutral'],
+        marker='o', alpha=0.6)
+ax.plot(gen, best, label='best sampled candidate', color=COLORS['faint'],
+        marker='o', alpha=0.6, linestyle='--')
+ax.plot(gen, incumbent, label='incumbent (accepted centre)',
+        color=COLORS['zhodani'], marker='o', linewidth=2.5)
 ax.set_xlabel('generation', color=COLORS['text'])
 ax.set_ylabel('victory margin (Zhodani +)', color=COLORS['text'])
 ax.set_title('Cross-entropy training of the Zhodani doctrine',
@@ -455,9 +471,10 @@ plt.show()"""),
 md("""### A lookahead agent
 
 `LookaheadAgent` copies the whole game state and rolls it forward a few turns
-for each shortlisted destination. It plays better than the pure heuristic but is
-roughly an order of magnitude slower, so it gets its own short match rather than
-a place in the round-robin above."""),
+for each shortlisted destination. It plays better than the pure heuristic but
+costs roughly fifteen seconds a turn against the heuristic's tenth of a second,
+so it gets a short match here rather than a place in the round-robin above.
+Raise `max_turns` if you want to watch it fight a whole campaign."""),
 
 code("""t0 = time.time()
 s3 = ffw.new_game(seed=21)
@@ -466,9 +483,10 @@ outcome = ffw.play(s3,
                    ScriptedAgent(IMPERIAL, seed=1),
                    LookaheadAgent(ZHODANI, candidates=3, rollouts=1,
                                   horizon=2, seed=2),
-                   max_turns=18, on_turn=rec3)
-print('%s  (margin %+.1f, %.0fs)' % (outcome, s3.victory_margin(),
-                                     time.time() - t0))
+                   max_turns=8, on_turn=rec3)
+print('%s  (margin %+.1f after %d turns, %.0fs -- %.1fs per turn)'
+      % (outcome, s3.victory_margin(), s3.turn - 1, time.time() - t0,
+         (time.time() - t0) / max(1, s3.turn - 1)))
 draw_map(s3, rec3[-1], highlight=front_line(s3, rec3[-1]))
 plt.show()"""),
 

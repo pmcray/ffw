@@ -78,6 +78,11 @@ class TrainingLog:
         best = [g["best_score"] for g in self.generations]
         return gen, mean, best
 
+    def incumbents(self):
+        """Score of the accepted centre after each generation."""
+        return ([g["generation"] for g in self.generations],
+                [g.get("incumbent_score") for g in self.generations])
+
 
 def train_weights(side: str = ZHODANI, generations: int = 6,
                   population: int = 12, elite: int = 4, games: int = 2,
@@ -92,38 +97,59 @@ def train_weights(side: str = ZHODANI, generations: int = 6,
     mean = np.asarray(weight_vector(base_weights), dtype=np.float64)
     spread = np.full(mean.shape, sigma)
     log = TrainingLog()
-    best_overall, best_score = weight_dict(mean), -1e18
+
+    # Common random numbers: every candidate in every generation is judged on
+    # the same set of games.  Without this the score of a generation depends on
+    # which seeds it happened to draw, and the learning curve measures the
+    # seeds rather than the doctrine.
+    match_seeds = [seed * 1000 + g for g in range(games)]
+
+    def evaluate(vector) -> float:
+        total = 0.0
+        for match_seed in match_seeds:
+            learner = HeuristicAgent(side, weight_dict(vector),
+                                     seed=match_seed, label="candidate")
+            other = (opponent(state_side(side), match_seed) if opponent
+                     else ScriptedAgent(state_side(side), seed=match_seed))
+            if side == ZHODANI:
+                margin, _, _ = play_match(other, learner, seed=match_seed,
+                                          max_turns=max_turns)
+            else:
+                margin, _, _ = play_match(learner, other, seed=match_seed,
+                                          max_turns=max_turns)
+            total += score_for(side, margin)
+        return total / len(match_seeds)
+
+    incumbent = evaluate(mean)
+    best_overall, best_score = weight_dict(mean), incumbent
 
     for generation in range(generations):
         candidates = rng.normal(mean, spread, (population, len(mean)))
-        scores = np.zeros(population)
-        for i, vector in enumerate(candidates):
-            total = 0.0
-            for g in range(games):
-                match_seed = seed * 1000 + generation * 97 + g
-                learner = HeuristicAgent(side, weight_dict(vector),
-                                         seed=match_seed, label="candidate")
-                other = (opponent(state_side(side), match_seed) if opponent
-                         else ScriptedAgent(state_side(side), seed=match_seed))
-                if side == ZHODANI:
-                    margin, _, _ = play_match(other, learner, seed=match_seed,
-                                              max_turns=max_turns)
-                else:
-                    margin, _, _ = play_match(learner, other, seed=match_seed,
-                                              max_turns=max_turns)
-                total += score_for(side, margin)
-            scores[i] = total / games
+        scores = np.array([evaluate(v) for v in candidates])
         order = np.argsort(scores)[::-1]
         keep = candidates[order[:elite]]
-        mean = keep.mean(axis=0)
-        spread = np.maximum(keep.std(axis=0), 0.05)
+        proposal = keep.mean(axis=0)
+        proposal_score = evaluate(proposal)
+        # Only move if the new centre is actually better on the same games.
+        # Plain cross-entropy walks downhill happily when the elite sample was
+        # lucky, which on a game this noisy is most of the time.
+        if proposal_score >= incumbent:
+            mean, incumbent = proposal, proposal_score
+        # Injected noise: the standard deviation of four elite samples collapses
+        # within a couple of generations and the search stops exploring, so the
+        # elite spread is floored by a separately decayed exploration term.
+        explore = sigma * (0.75 ** (generation + 1))
+        spread = np.maximum(keep.std(axis=0), explore)
         top = float(scores[order[0]])
         if top > best_score:
             best_score, best_overall = top, weight_dict(candidates[order[0]])
         log.add(generation=generation, mean_score=float(scores.mean()),
-                best_score=top, weights=weight_dict(mean))
+                best_score=top, incumbent_score=incumbent,
+                weights=weight_dict(mean))
         if progress is not None:
             progress(generation, float(scores.mean()), top)
+    if incumbent > best_score:
+        best_overall, best_score = weight_dict(mean), incumbent
     return best_overall, log
 
 
