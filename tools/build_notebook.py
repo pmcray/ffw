@@ -480,6 +480,15 @@ for name in sorted(names, key=lambda n: -summary[n]['average']):
           % (name, s['games'], s['wins'], s['draws'], s['losses'],
              s['average']))"""),
 
+md("""The same caution applies here as to the value network, for the same
+reason. One game per pairing means each entry's average rests on eight games,
+and a single game swings by tens of victory points on the dice. That is enough
+to separate `random` from everything else — it loses by 60-plus VP a game,
+which is far outside the noise — and **not** enough to rank the four real
+agents against each other. Their ordering will change from run to run.
+
+Raise `games` if you want a ranking you can defend; the cost is linear."""),
+
 code("""fig, ax = plt.subplots(figsize=(9, 4))
 fig.patch.set_facecolor(COLORS['background'])
 ax.set_facecolor(COLORS['background'])

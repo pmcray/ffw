@@ -21,7 +21,7 @@ ffw/                      the game
   training.py             cross-entropy doctrine search and self-play regression
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural, human
-tests/test_ffw.py         49 tests, including the rulebook's worked examples
+tests/test_ffw.py         52 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -29,7 +29,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 49 tests, about 25 seconds
+python -m unittest discover tests          # 52 tests, about 45 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -177,7 +177,14 @@ seat and scored the other seat's games *backwards*, at a held-out correlation of
 −0.49. In both cases the training loss looked excellent.
 
 `tools/train_reference_agents.py` regenerates the trained agents committed under
-`ffw/data/`.
+`ffw/data/`; `tools/train_one_side.py imperial` does just one side.
+
+`tournament` carries the same health warning. At one game per pairing each
+entry's average rests on a handful of games, and a single game of Fifth
+Frontier War swings by tens of victory points on the dice alone. That reliably
+separates `random` from the rest — it loses by 60-plus VP a game — but it will
+not rank the four real agents against each other, and their order changes from
+run to run. Raise `games` for a ranking you can defend.
 
 ## Writing your own agent
 
