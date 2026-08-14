@@ -69,7 +69,8 @@ from ffw.agents import (RandomAgent, HeuristicAgent, ScriptedAgent,
 from ffw.viz import GameRecorder, draw_map, plot_history, front_line, COLORS
 from ffw.training import (play_match, train_weights, train_value_network,
                           tournament, save_agent, load_agent,
-                          evaluator_report, seat_bias, play_paired)
+                          evaluator_report, seat_bias, play_paired,
+                          train_league)
 
 plt.rcParams['figure.facecolor'] = COLORS['background']
 print('ffw', ffw.__version__)"""),
@@ -426,17 +427,66 @@ code("""save_agent('trained_zhodani_notebook.json', best_weights, net,
 w, n, meta = load_agent('trained_zhodani_notebook.json')
 print('saved and reloaded:', meta)"""),
 
+md("""## 5b. Training that moves the needle
+
+Everything above is notebook-scale: a few games per candidate, a fixed
+opponent, and error bars wide enough to hide the result. Two things fix that,
+and both live in `ffw.training`.
+
+**Co-evolution.** `train_weights` optimises against a *fixed* `ScriptedAgent`,
+which rewards doctrine that beats that particular opponent — the standard way
+to breed a specialist that folds against anything else. `train_league` instead
+scores each side's candidates against a sample of the *other side's past
+champions*, so the target moves as both sides improve.
+
+That makes the co-evolution score unreadable on its own, which is worth being
+explicit about: if your score stays flat while your opponents get better, you
+improved. So the league logs two numbers per generation — `score` against the
+current pool (**not** comparable across generations) and `benchmark`, the
+paired advantage over a fixed stock agent (**is** comparable). Read the second
+one."""),
+
+code("""t0 = time.time()
+champions, league_log = train_league(
+    generations=2, population=5, elite=3, games=1, pool=3,
+    max_turns=24, benchmark_games=2, seed=5,
+    progress=lambda g, side, score, mark: print(
+        '  gen %d  %-8s  pool %+7.1f   vs stock %+7.1f' % (g, side, score, mark)))
+print('\\n%.0fs' % (time.time() - t0))
+print()
+print('%-4s %-9s %10s %11s %9s' % ('gen', 'side', 'pool', 'vs stock', 'accepted'))
+for r in league_log.rows:
+    print('%-4d %-9s %+10.1f %+11.1f %9s'
+          % (r['generation'], r['side'], r['score'], r['benchmark'],
+             r['accepted']))"""),
+
+md("""**Scale.** The run above is a demonstration, not a training run — at one
+game per candidate the numbers are noise. `tools/train_at_scale.py` is the real
+thing: league co-evolution with a proper sample size, a large self-play
+regression for the value network, and a verification step that plays the
+trained doctrine against the stock one over paired games and reports whether it
+actually won, with a standard error. Training you cannot show to have helped is
+not worth keeping."""),
+
 md("""### Reference agents
 
-The repository ships with agents trained by `tools/train_reference_agents.py`.
-Load them here if you would rather not wait for training."""),
+The repository ships with agents produced by `tools/train_at_scale.py`, each
+carrying the verification result in its metadata."""),
 
 code("""def load_reference(side):
     path = os.path.join('ffw', 'data', 'trained_%s.json' % side)
     if not os.path.exists(path):
+        print('%s: no reference agent committed' % side)
         return None, None
-    w, n, meta = load_agent(path)
-    print('%s reference agent: %s' % (side, meta))
+    try:
+        w, n, meta = load_agent(path)
+    except ValueError as exc:
+        # a network is only meaningful with the feature layout it was fitted to
+        print('%s: %s' % (side, exc))
+        return None, None
+    print('%s reference agent:' % side)
+    for k, v in meta.items():
+        print('    %-14s %s' % (k, v))
     return w, n
 
 ref_zho_w, ref_zho_net = load_reference('zhodani')

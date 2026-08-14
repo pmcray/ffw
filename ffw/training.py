@@ -192,6 +192,131 @@ def state_side(side: str) -> str:
 
 
 # --------------------------------------------------------------------------
+@dataclass
+class LeagueLog:
+    """Per-generation record for ``train_league``."""
+    rows: list[dict] = field(default_factory=list)
+
+    def add(self, **kw) -> None:
+        self.rows.append(kw)
+
+    def curve(self, side: str, key: str = "benchmark"):
+        gens = [r["generation"] for r in self.rows if r["side"] == side]
+        vals = [r[key] for r in self.rows if r["side"] == side]
+        return gens, vals
+
+
+def train_league(generations: int = 6, population: int = 8, elite: int = 3,
+                 games: int = 1, sigma: float = 0.45, seed: int = 0,
+                 max_turns: int = 40, pool: int = 4,
+                 base_weights: dict | None = None, benchmark_games: int = 2,
+                 progress=None):
+    """Co-evolve doctrines for both sides against a growing pool of champions.
+
+    ``train_weights`` optimises one side against a *fixed* opponent, which
+    rewards doctrine that beats that particular opponent -- the classic way to
+    produce a specialist that folds against anything else.  Here each side's
+    candidates are scored against a sample of the other side's past champions,
+    so the target moves as both sides improve.
+
+    Two scores are logged per generation because they answer different
+    questions:
+
+    ``score``
+        performance against the current opposing pool.  It is *not* comparable
+        across generations: the pool improves, so a flat score can mean the
+        doctrine improved exactly as fast as its opposition.
+    ``benchmark``
+        paired advantage against a fixed ``ScriptedAgent``, played on both
+        seats.  This one *is* comparable across generations and is the number
+        to read for "did it actually get better".
+
+    Returns ``(champions, log)`` where ``champions`` maps each side to its final
+    weight dict.
+    """
+    rng = np.random.default_rng(seed)
+    base = np.asarray(weight_vector(base_weights), dtype=np.float64)
+    mean = {IMPERIAL: base.copy(), ZHODANI: base.copy()}
+    spread = {IMPERIAL: np.full(base.shape, sigma),
+              ZHODANI: np.full(base.shape, sigma)}
+    league = {IMPERIAL: [weight_dict(base)], ZHODANI: [weight_dict(base)]}
+    incumbent = {IMPERIAL: None, ZHODANI: None}
+    log = LeagueLog()
+
+    def evaluate(side: str, vector, opponents, seeds) -> float:
+        total = 0.0
+        for opponent_weights in opponents:
+            for match_seed in seeds:
+                learner = HeuristicAgent(side, weight_dict(vector),
+                                         seed=match_seed, label="candidate")
+                other = HeuristicAgent(state_side(side), opponent_weights,
+                                       seed=match_seed + 7)
+                if side == ZHODANI:
+                    margin, _, _ = play_match(other, learner, seed=match_seed,
+                                              max_turns=max_turns)
+                else:
+                    margin, _, _ = play_match(learner, other, seed=match_seed,
+                                              max_turns=max_turns)
+                total += score_for(side, margin)
+        return total / max(1, len(opponents) * len(seeds))
+
+    def benchmark(side: str, weights) -> float:
+        """Paired advantage over the stock ScriptedAgent, both seats."""
+        learner = lambda s, d: HeuristicAgent(s, weights, seed=d)
+        stock = lambda s, d: ScriptedAgent(s, seed=d)
+        total = 0.0
+        for g in range(benchmark_games):
+            advantage, _, _ = play_paired(learner, stock,
+                                          seed=seed * 613 + g,
+                                          max_turns=max_turns)
+            total += advantage
+        return total / max(1, benchmark_games)
+
+    for generation in range(generations):
+        for side in (ZHODANI, IMPERIAL):
+            opponents = league[state_side(side)][-pool:]
+            seeds = [seed * 1000 + generation * 31 + g for g in range(games)]
+            if incumbent[side] is None:
+                incumbent[side] = evaluate(side, mean[side], opponents, seeds)
+            else:
+                # the pool moved, so the incumbent has to be re-scored on it
+                incumbent[side] = evaluate(side, mean[side], opponents, seeds)
+            candidates = rng.normal(mean[side], spread[side],
+                                    (population, len(base)))
+            scores = np.array([evaluate(side, v, opponents, seeds)
+                               for v in candidates])
+            order = np.argsort(scores)[::-1]
+            keep = candidates[order[:elite]]
+            proposal = keep.mean(axis=0)
+            proposal_score = evaluate(side, proposal, opponents, seeds)
+            accepted = proposal_score >= incumbent[side]
+            if accepted:
+                mean[side], incumbent[side] = proposal, proposal_score
+            explore = sigma * (0.75 ** (generation + 1))
+            spread[side] = np.maximum(keep.std(axis=0), explore)
+            # The pool must gain *variety*, not repetition.  Appending the
+            # incumbent fills it with copies of one doctrine the moment the
+            # incumbent stops moving, and a league of clones is just a fixed
+            # opponent wearing several hats.  The best candidate of the
+            # generation is a genuinely different opponent whether or not it
+            # displaced the champion.
+            league[side].append(weight_dict(candidates[order[0]]))
+            if len(league[side]) > pool * 3:
+                league[side] = league[side][-pool * 3:]
+            mark = benchmark(side, weight_dict(mean[side]))
+            log.add(generation=generation, side=side,
+                    score=float(incumbent[side]), benchmark=float(mark),
+                    best_candidate=float(scores[order[0]]),
+                    proposal=float(proposal_score), accepted=bool(accepted),
+                    pool=len(opponents), weights=weight_dict(mean[side]))
+            if progress is not None:
+                progress(generation, side, float(incumbent[side]), float(mark))
+
+    champions = {side: weight_dict(mean[side]) for side in mean}
+    return champions, log
+
+
+# --------------------------------------------------------------------------
 def train_value_network(games: int = 18, epochs: int = 80, hidden: int = 12,
                         seed: int = 0, network: ValueNetwork | None = None,
                         max_turns: int = 45, agents=None, progress=None,

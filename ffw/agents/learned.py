@@ -33,6 +33,7 @@ class ValueNetwork:
         self.b1 = np.zeros(hidden)
         self.w2 = rng.normal(0, 1.0 / math.sqrt(hidden), (hidden, 1))
         self.b2 = np.zeros(1)
+        self.feature_version = features.FEATURE_VERSION
 
     # -- inference ---------------------------------------------------------
     def __call__(self, x: np.ndarray) -> float:
@@ -72,14 +73,35 @@ class ValueNetwork:
 
     # -- persistence -------------------------------------------------------
     def to_dict(self) -> dict:
-        return {k: getattr(self, k).tolist()
-                for k in ("w1", "b1", "w2", "b2")}
+        payload = {k: getattr(self, k).tolist()
+                   for k in ("w1", "b1", "w2", "b2")}
+        payload["feature_version"] = getattr(self, "feature_version",
+                                             features.FEATURE_VERSION)
+        payload["n_features"] = int(self.w1.shape[0])
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict) -> "ValueNetwork":
+        """Rebuild a saved network, refusing one built on a different feature set.
+
+        A network is only meaningful alongside the feature layout it was fitted
+        to.  Loading an old one against a new layout silently reinterprets every
+        column, which is far worse than failing.
+        """
+        stored = data.get("feature_version")
+        if stored is not None and stored != features.FEATURE_VERSION:
+            raise ValueError(
+                "value network was trained on feature version %s but this "
+                "build uses version %s -- retrain it (tools/train_one_side.py)"
+                % (stored, features.FEATURE_VERSION))
         net = cls(seed=None)
         for key in ("w1", "b1", "w2", "b2"):
             setattr(net, key, np.asarray(data[key], dtype=np.float64))
+        if net.w1.shape[0] != features.N_FEATURES:
+            raise ValueError(
+                "value network expects %d features, this build produces %d"
+                % (net.w1.shape[0], features.N_FEATURES))
+        net.feature_version = features.FEATURE_VERSION
         return net
 
     def save(self, path: str) -> None:

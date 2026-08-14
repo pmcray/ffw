@@ -587,3 +587,95 @@ class TestAmphibiousCapability(unittest.TestCase):
                                      and t.losses < 100))
         self.assertGreater(afloat, 0,
                            "the Imperium never embarked a single troop factor")
+
+
+class TestFeatureLayout(unittest.TestCase):
+    """The perspective flip is derived from names, so it must stay consistent."""
+
+    def test_flip_is_its_own_inverse(self):
+        from ffw import features
+        state = new_game(seed=31)
+        raw = features.extract(state)
+        for side in (IMPERIAL, ZHODANI):
+            twice = features.perspective(features.perspective(raw, side), side)
+            self.assertTrue(np.allclose(twice, raw))
+
+    def test_every_paired_feature_is_swapped(self):
+        """A feature named _imperial/_zhodani must have a partner and swap."""
+        from ffw import features
+        paired = [n for n in features.FEATURE_NAMES
+                  if n.endswith(("_imperial", "_zhodani"))]
+        self.assertEqual(len(paired), 2 * len(features.SWAP_PAIRS),
+                         "a paired feature has no partner in SWAP_PAIRS")
+        probe = np.arange(features.N_FEATURES, dtype=float)
+        flipped = features.perspective(probe, IMPERIAL)
+        for a, b in features.SWAP_PAIRS:
+            self.assertEqual(flipped[a], probe[b])
+            self.assertEqual(flipped[b], probe[a])
+
+    def test_signed_features_are_negated(self):
+        from ffw import features
+        probe = np.ones(features.N_FEATURES)
+        flipped = features.perspective(probe, IMPERIAL)
+        for name in features.SIGNED:
+            self.assertEqual(flipped[features.INDEX[name]], -1.0)
+
+    def test_neutral_features_are_untouched(self):
+        from ffw import features
+        swapped = {i for pair in features.SWAP_PAIRS for i in pair}
+        signed = {features.INDEX[n] for n in features.SIGNED}
+        probe = np.arange(features.N_FEATURES, dtype=float) + 1.0
+        flipped = features.perspective(probe, IMPERIAL)
+        for i, name in enumerate(features.FEATURE_NAMES):
+            if i in swapped or i in signed:
+                continue
+            self.assertEqual(flipped[i], probe[i],
+                             "%s should be viewer-independent" % name)
+
+    def test_a_zhodani_advance_reads_as_good_for_the_zhodani(self):
+        from ffw import features
+        state = new_game(seed=32)
+        before = features.extract(state)
+        for hex_id in ("2314", "2109", "1510"):
+            state.world_map.get(hex_id).control = ZHODANI
+        after = features.extract(state)
+        i = features.INDEX["vp_margin"]
+        self.assertGreater(after[i], before[i])
+        # ... and the reverse when read from the Imperial seat
+        self.assertLess(features.perspective(after, IMPERIAL)[i],
+                        features.perspective(before, IMPERIAL)[i])
+
+    def test_stale_networks_are_rejected_not_misread(self):
+        from ffw.agents import ValueNetwork
+        from ffw import features
+        net = ValueNetwork(hidden=4, seed=0)
+        payload = net.to_dict()
+        payload["feature_version"] = features.FEATURE_VERSION + 99
+        with self.assertRaises(ValueError):
+            ValueNetwork.from_dict(payload)
+
+
+class TestLeagueTraining(unittest.TestCase):
+    def test_league_returns_a_doctrine_for_each_side(self):
+        from ffw.training import train_league
+        from ffw.agents import WEIGHTS
+        champions, log = train_league(generations=1, population=3, elite=2,
+                                      games=1, pool=2, max_turns=8,
+                                      benchmark_games=1, seed=2)
+        self.assertEqual(set(champions), {IMPERIAL, ZHODANI})
+        for side in champions:
+            self.assertEqual(set(champions[side]), set(WEIGHTS))
+        self.assertEqual(len(log.rows), 2)
+        for row in log.rows:
+            self.assertIn("benchmark", row)
+            self.assertIn("accepted", row)
+
+    def test_league_pool_gains_variety(self):
+        """A pool of clones is a fixed opponent wearing hats; it must diverge."""
+        from ffw.training import train_league
+        champions, log = train_league(generations=2, population=3, elite=2,
+                                      games=1, pool=2, max_turns=8,
+                                      benchmark_games=1, seed=3)
+        zho = [r["weights"] for r in log.rows if r["side"] == ZHODANI]
+        self.assertEqual(len(zho), 2)
+        self.assertIsInstance(zho[0], dict)

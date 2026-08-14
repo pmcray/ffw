@@ -176,8 +176,32 @@ discrimination whatsoever. The second collected games from only one player's
 seat and scored the other seat's games *backwards*, at a held-out correlation of
 −0.49. In both cases the training loss looked excellent.
 
-`tools/train_reference_agents.py` regenerates the trained agents committed under
-`ffw/data/`; `tools/train_one_side.py imperial` does just one side.
+### Training that can be shown to have worked
+
+`train_weights` optimises one side against a *fixed* opponent, which rewards
+doctrine that beats that opponent specifically. `train_league` co-evolves both
+sides against a pool of each other's past champions, so the target moves as the
+learner improves. It logs two numbers per generation and they answer different
+questions:
+
+- `score` — performance against the current opposing pool. **Not** comparable
+  across generations: a flat score while the pool improves means the doctrine
+  improved just as fast.
+- `benchmark` — paired advantage over a fixed stock agent, played on both
+  seats. This one **is** comparable, and it is the number to read.
+
+```bash
+python tools/train_at_scale.py          # league + value network + verification
+python tools/train_at_scale.py verify   # just re-check the committed agents
+```
+
+`train_at_scale.py` ends with a verification step: it plays the trained
+doctrine against the stock one over paired games and reports the advantage with
+a standard error and a verdict of better / worse / indistinguishable. That
+verdict is stored in each agent's metadata, because training that cannot be
+shown to have helped is not worth committing. `tools/train_one_side.py` and
+`tools/train_reference_agents.py` remain for single-side and fixed-opponent
+runs.
 
 `tournament` plays **paired games**: each matchup runs twice on one seed with
 the seats swapped, and the number reported is the difference between the two
