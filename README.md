@@ -21,7 +21,7 @@ ffw/                      the game
   training.py             cross-entropy doctrine search and self-play regression
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural, human
-tests/test_ffw.py         59 tests, including the rulebook's worked examples
+tests/test_ffw.py         69 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -29,7 +29,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 59 tests, about 50 seconds
+python -m unittest discover tests          # 69 tests, about 2.5 minutes
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
