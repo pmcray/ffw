@@ -23,6 +23,10 @@ This script trains both on the same games and compares them three ways:
     ``LookaheadAgent``, which is where a short-horizon prediction should help
     most.
 
+Sample size matters more than it looks.  At ten paired games the second test
+read +10.2 +/- 8.1 in the delta network's favour; at sixty it read +1.6 +/- 2.5,
+which is nothing.  The default is sixty.
+
     python tools/evaluator_trial.py [games] [max_turns]
 """
 
@@ -63,7 +67,12 @@ def paired(a, b, games, max_turns, seed):
             "verdict": verdict}
 
 
-def main(games=50, max_turns=30, match_games=10, match_turns=40):
+def main(games=50, max_turns=30, match_games=60, match_turns=40,
+         lookahead_games=8):
+    # The lookahead matches get their own, much smaller budget: the search
+    # agent costs about forty times what the doctrine does per game, so
+    # matching the sixty games used for the neural comparison would take most
+    # of a day.  Their error bars are correspondingly wide, and are reported.
     start = time.time()
     nets = {}
     for target in ("final", "delta"):
@@ -103,7 +112,7 @@ def main(games=50, max_turns=30, match_games=10, match_turns=40):
         results[key] = paired(
             lambda s, d: LookaheadAgent(s, seed=d, evaluator=net),
             lambda s, d: ScriptedAgent(s, seed=d),
-            max(4, match_games // 2), match_turns, seed=5200)
+            lookahead_games, match_turns, seed=5200)
         print("   lookahead(%s leaf) vs scripted  %+7.1f +/- %5.1f -> %s   %s"
               % (name, results[key]["advantage"], results[key]["stderr"],
                  results[key]["verdict"], elapsed(start)), flush=True)
@@ -111,7 +120,7 @@ def main(games=50, max_turns=30, match_games=10, match_turns=40):
     results["raw_lookahead"] = paired(
         lambda s, d: LookaheadAgent(s, seed=d),
         lambda s, d: ScriptedAgent(s, seed=d),
-        max(4, match_games // 2), match_turns, seed=5200)
+        lookahead_games, match_turns, seed=5200)
     print("   lookahead(raw margin leaf) vs scripted  %+7.1f +/- %5.1f -> %s"
           "   %s" % (results["raw_lookahead"]["advantage"],
                      results["raw_lookahead"]["stderr"],

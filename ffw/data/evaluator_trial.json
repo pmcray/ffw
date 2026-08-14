@@ -33,10 +33,11 @@
  },
  "matches": {
   "neural": {
-   "advantage": 10.15,
-   "stderr": 8.07535688925814,
-   "games": 10,
-   "verdict": "indistinguishable"
+   "advantage": 1.6,
+   "stderr": 2.5,
+   "games": 60,
+   "verdict": "indistinguishable",
+   "note": "re-run at 60 paired games; the 10-game figure of +10.2 +/- 8.1 was noise"
   },
   "lookahead_delta": {
    "advantage": -16.15,

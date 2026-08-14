@@ -213,12 +213,22 @@ so a network that echoes one column already scores +0.71 against the `final`
 target without knowing anything. Against the `delta` target that same echo
 scores −0.14, so every point of the delta network's +0.46 is earned.
 
-Whether it plays better is a separate question, and the answer so far is *not
-provably*: `NeuralAgent` driven by the delta network beat the same agent driven
-by the final-margin network by +10.2 ± 8.1 VP over ten paired games — pointing
-the right way, not resolved. `tools/evaluator_trial.py` runs the whole
-comparison, and the network records which target it was fitted to so the two
-cannot be silently swapped.
+Whether it plays better is a separate question, and the answer is **no**:
+`NeuralAgent` driven by the delta network scored +1.6 ± 2.5 VP against the same
+agent driven by the final-margin network over sixty paired games. Ten games had
+said +10.2 ± 8.1, which is the usual lesson about this game's variance — a
+promising result at one sample size and nothing at four times that.
+
+A better evaluator that does not play better is worth understanding rather than
+discarding. `NeuralAgent` uses the network as a thermostat: one scalar per turn
+that shifts aggression, risk and concentration. That wiring was designed around
+*am I winning*, and the delta network answers *am I gaining*, which is a
+different question — the thermostat cannot exploit the extra accuracy because
+it barely uses the number. The delta network's natural home is a search leaf,
+where the question genuinely is "which of these positions is about to improve";
+`LookaheadAgent` accepts it as an `evaluator` for that reason.
+`tools/evaluator_trial.py` runs the whole comparison, and the network records
+which target it was fitted to so the two cannot be silently swapped.
 
 **How much to trust either of them.** Not very much at notebook scale, and the
 code is built to make that visible. `evaluator_report` scores the network on
