@@ -679,3 +679,31 @@ class TestLeagueTraining(unittest.TestCase):
         zho = [r["weights"] for r in log.rows if r["side"] == ZHODANI]
         self.assertEqual(len(zho), 2)
         self.assertIsInstance(zho[0], dict)
+
+
+class TestEvaluatorHonesty(unittest.TestCase):
+    """A correlation with the outcome is not the same as judgement."""
+
+    def test_report_includes_the_trivial_baseline(self):
+        from ffw.training import train_value_network, evaluator_report
+        net, _ = train_value_network(games=4, epochs=10, seed=2, max_turns=12)
+        report = evaluator_report(net, games=3, seed=5, max_turns=12)
+        for key in ("baseline_correlation", "skill_over_baseline",
+                    "early_correlation", "early_baseline"):
+            self.assertIn(key, report)
+        self.assertAlmostEqual(
+            report["skill_over_baseline"],
+            report["correlation"] - report["baseline_correlation"], places=9)
+
+    def test_echoing_the_score_scores_no_skill(self):
+        """A "network" that returns the margin column must show zero skill."""
+        from ffw.training import evaluator_report
+        from ffw import features
+
+        class Echo:
+            def __call__(self, vector):
+                return float(vector[features.INDEX["vp_margin"]])
+
+        report = evaluator_report(Echo(), games=3, seed=6, max_turns=14)
+        self.assertLess(abs(report["skill_over_baseline"]), 0.05,
+                        "echoing one feature must not read as skill")

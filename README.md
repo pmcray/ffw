@@ -163,10 +163,22 @@ print(evaluator_report(net, games=8))
 # {'correlation': +0.27, 'ci': (-0.45, +0.73), 'spread': 0.09, ...}
 ```
 
-Expect a positive point estimate with an interval straddling zero: the sign is
-probably right, the magnitude is not measurable from a handful of games. That is
-why `NeuralAgent` only nudges its doctrine with the network rather than choosing
-moves with it.
+At notebook scale expect a positive point estimate with an interval straddling
+zero. Trained at scale (70 games, the 43-feature encoding) it reaches +0.84 with
+a 90% interval of [+0.74, +0.89] — but that number needs reading carefully, and
+`evaluator_report` now reports what it needs:
+
+```
+overall  network +0.835   trivial vp_margin baseline +0.701   skill +0.134
+early    network +0.655   baseline +0.657   (before turn 12)
+```
+
+The feature vector contains the current victory margin, and late in a game that
+*is* the answer, so a network echoing one column already scores +0.70. The
+network's genuine contribution over that baseline is +0.13 — and in the early
+game, the only place where an evaluator can show it knows something the
+scoreboard has not already revealed, it adds **nothing**. That is why
+`NeuralAgent` nudges its doctrine rather than choosing moves with it.
 
 Two earlier versions of this training loop were broken in ways the regression
 loss did not reveal, which is the reason the diagnostic exists at all. The first
@@ -194,6 +206,16 @@ questions:
 python tools/train_at_scale.py          # league + value network + verification
 python tools/train_at_scale.py verify   # just re-check the committed agents
 ```
+
+Run at scale, the league's benchmark curves were `+23 +35 +32 +41 +41 +23`
+(Imperial) and `+6 +0 +11 +11 +21 +21` (Zhodani) — upward, but with five paired
+games per benchmark the wobble is noise, so the final verification is the number
+to trust:
+
+| side | advantage over stock | verdict |
+|---|---|---|
+| Zhodani | +25.4 ± 6.7 VP | better (3.8σ) |
+| Imperial | +40.0 ± 9.3 VP | better (4.3σ) |
 
 `train_at_scale.py` ends with a verification step: it plays the trained
 doctrine against the stock one over paired games and reports the advantage with

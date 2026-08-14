@@ -1,0 +1,166 @@
+{
+ "champions": {
+  "imperial": {
+   "vp_value": 1.3505034499368118,
+   "capital": 0.2952718023488192,
+   "undefended": -0.10393222902517756,
+   "enemy_fleet": -1.6211049960431976,
+   "own_support": -0.40249169280535035,
+   "distance": 0.11852362280559531,
+   "refuel": 1.4520206528559834,
+   "base": -0.23083729960866264,
+   "invasion": 0.5007670759092502,
+   "garrison_gap": 0.39395992909172517,
+   "threat_cover": 0.5030757120094506,
+   "concentration": -0.2425111851460896,
+   "home_pull": 0.6690345688822723,
+   "risk_tolerance": 0.8574956018933512,
+   "guerrilla_overt": 0.7569023367168771,
+   "armistice": 0.2213876582038769,
+   "frontier_pull": 0.9175577659303139,
+   "takeable": 1.514129205215835
+  },
+  "zhodani": {
+   "vp_value": 0.8962797117323357,
+   "capital": 0.7133243920318708,
+   "undefended": 0.8536066409507217,
+   "enemy_fleet": -1.073049996121305,
+   "own_support": 0.43626603484607734,
+   "distance": -0.5206976497471077,
+   "refuel": 0.800659618129715,
+   "base": 0.5154892384575387,
+   "invasion": 1.6621637710668655,
+   "garrison_gap": 0.41742559531410706,
+   "threat_cover": 0.7628593578381768,
+   "concentration": 0.1310708018789407,
+   "home_pull": 0.641670155288345,
+   "risk_tolerance": 0.45543238902697825,
+   "guerrilla_overt": 0.8617095946619687,
+   "armistice": -0.0188702252582943,
+   "frontier_pull": 1.0810545010036523,
+   "takeable": 1.7426919255931221
+  }
+ },
+ "log": [
+  {
+   "generation": 0,
+   "side": "zhodani",
+   "score": 191.5,
+   "benchmark": 5.95,
+   "best_candidate": 210.75,
+   "proposal": 184.75,
+   "accepted": false,
+   "pool": 1
+  },
+  {
+   "generation": 0,
+   "side": "imperial",
+   "score": -180.625,
+   "benchmark": 23.4,
+   "best_candidate": -144.0,
+   "proposal": -180.625,
+   "accepted": true,
+   "pool": 2
+  },
+  {
+   "generation": 1,
+   "side": "zhodani",
+   "score": 165.125,
+   "benchmark": 0.0,
+   "best_candidate": 168.875,
+   "proposal": 165.125,
+   "accepted": true,
+   "pool": 2
+  },
+  {
+   "generation": 1,
+   "side": "imperial",
+   "score": -135.33333333333334,
+   "benchmark": 35.35,
+   "best_candidate": -118.33333333333333,
+   "proposal": -135.33333333333334,
+   "accepted": true,
+   "pool": 3
+  },
+  {
+   "generation": 2,
+   "side": "zhodani",
+   "score": 160.5,
+   "benchmark": 11.2,
+   "best_candidate": 177.5,
+   "proposal": 160.5,
+   "accepted": true,
+   "pool": 3
+  },
+  {
+   "generation": 2,
+   "side": "imperial",
+   "score": -145.0625,
+   "benchmark": 31.7,
+   "best_candidate": -141.75,
+   "proposal": -145.0625,
+   "accepted": true,
+   "pool": 4
+  },
+  {
+   "generation": 3,
+   "side": "zhodani",
+   "score": 140.5,
+   "benchmark": 11.2,
+   "best_candidate": 152.625,
+   "proposal": 136.1875,
+   "accepted": false,
+   "pool": 4
+  },
+  {
+   "generation": 3,
+   "side": "imperial",
+   "score": -119.5,
+   "benchmark": 40.65,
+   "best_candidate": -116.0,
+   "proposal": -119.5,
+   "accepted": true,
+   "pool": 4
+  },
+  {
+   "generation": 4,
+   "side": "zhodani",
+   "score": 171.75,
+   "benchmark": 21.35,
+   "best_candidate": 178.1875,
+   "proposal": 171.75,
+   "accepted": true,
+   "pool": 4
+  },
+  {
+   "generation": 4,
+   "side": "imperial",
+   "score": -134.375,
+   "benchmark": 40.65,
+   "best_candidate": -124.0625,
+   "proposal": -136.1875,
+   "accepted": false,
+   "pool": 4
+  },
+  {
+   "generation": 5,
+   "side": "zhodani",
+   "score": 147.3125,
+   "benchmark": 21.35,
+   "best_candidate": 158.5,
+   "proposal": 144.0625,
+   "accepted": false,
+   "pool": 4
+  },
+  {
+   "generation": 5,
+   "side": "imperial",
+   "score": -147.25,
+   "benchmark": 23.45,
+   "best_candidate": -130.8125,
+   "proposal": -147.25,
+   "accepted": true,
+   "pool": 4
+  }
+ ]
+}

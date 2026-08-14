@@ -455,8 +455,30 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
             samples.append(float(np.corrcoef(p, l)[0, 1]))
     low, high = (float(np.percentile(samples, 5)),
                  float(np.percentile(samples, 95))) if samples else (0.0, 0.0)
+
+    # A correlation with the outcome is not the same as judgement.  The feature
+    # vector already contains the current victory margin, and late in a game
+    # that *is* the answer, so a network that simply echoes one column scores
+    # well.  Report that trivial baseline alongside, and report the early game
+    # separately -- before the score has revealed the result is the only place
+    # where an evaluator can show it knows anything.
+    margin_column = np.asarray(xs)[:, features.INDEX["vp_margin"]]
+    turn_column = np.asarray(xs)[:, features.INDEX["turn"]]
+
+    def corr_of(a, b) -> float:
+        if len(a) < 3 or np.std(a) < 1e-9 or np.std(b) < 1e-9:
+            return 0.0
+        return float(np.corrcoef(a, b)[0, 1])
+
+    baseline = corr_of(margin_column, labels)
+    early = turn_column < (12.0 / 60.0)
     return {"correlation": correlation,
             "ci": (low, high),
+            "baseline_correlation": baseline,
+            "skill_over_baseline": correlation - baseline,
+            "early_correlation": corr_of(predictions[early], labels[early]),
+            "early_baseline": corr_of(margin_column[early], labels[early]),
+            "early_positions": int(early.sum()),
             "spread": float(predictions.std()),
             "label_spread": float(labels.std()),
             "mae": float(np.mean(np.abs(predictions - labels))),
