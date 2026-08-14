@@ -83,6 +83,11 @@ class World:
         return {"imperial": IMPERIAL, "zhodani": ZHODANI,
                 "sword_worlds": ZHODANI, "vargr": ZHODANI}.get(self.owner)
 
+    def copy(self) -> "World":
+        new = World.__new__(World)
+        new.__dict__.update(self.__dict__)
+        return new
+
     def garrison_required(self, side: str | None = None) -> int:
         """Troop factors needed to hold the world (rule 5, Control).
 
@@ -101,11 +106,46 @@ class World:
         return max(1, self.defense_battalions // 100)
 
 
+class Geometry:
+    """Distance queries over a fixed set of worlds, answered once and kept.
+
+    Which worlds lie within *n* parsecs of a given hex depends only on the map,
+    never on the war, so every copy of the position can share one of these.  The
+    doctrine and the search agents ask these questions by the million and the
+    answers used to be recomputed every time, which made the whole engine
+    quadratic in the size of the Marches.
+    """
+
+    def __init__(self, worlds: Iterable[str]):
+        self.worlds = tuple(worlds)
+        present = set(self.worlds)
+        self.adjacency = {
+            h: tuple([h] + [n for n in hexmap.neighbours(h) if n in present])
+            for h in self.worlds}
+        self._bands: dict[tuple[str, int], tuple[str, ...]] = {}
+
+    def adjacent(self, hex_id: str) -> tuple[str, ...]:
+        """The worlds within one parsec of ``hex_id``, itself included."""
+        return self.adjacency.get(hex_id, ())
+
+    def within(self, origin: str, radius: int) -> tuple[str, ...]:
+        """The worlds strictly within ``radius`` parsecs, ``origin`` excluded."""
+        key = (origin, radius)
+        band = self._bands.get(key)
+        if band is None:
+            band = tuple(h for h in self.worlds
+                         if 0 < hexmap.distance(origin, h) <= radius)
+            self._bands[key] = band
+        return band
+
+
 @dataclass
 class WorldMap:
     worlds: dict[str, World]
     xboat_routes: list[tuple[str, str]]
     entry_hexes: dict[str, str]
+    #: shared, immutable distance tables; see :class:`Geometry`
+    _geometry: Geometry | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def load(cls, path: str | None = None) -> "WorldMap":
@@ -130,6 +170,29 @@ class WorldMap:
             worlds[world.hex] = world
         routes = [tuple(r) for r in raw["xboat_routes"]]
         return cls(worlds, routes, raw["entry_hexes"])
+
+    def copy(self) -> "WorldMap":
+        """Copy the worlds; share the route list, entry hexes and geometry.
+
+        Routes, entry hexes and distance tables are read-only reference data, so
+        a search rollout can share them with the position it branched from.
+        """
+        return WorldMap({h: w.copy() for h, w in self.worlds.items()},
+                        self.xboat_routes, self.entry_hexes, self.geometry)
+
+    @property
+    def geometry(self) -> Geometry:
+        if self._geometry is None:
+            self._geometry = Geometry(self.worlds)
+        return self._geometry
+
+    def adjacent(self, hex_id: str) -> tuple[str, ...]:
+        """The worlds within one parsec of ``hex_id``, including itself."""
+        return self.geometry.adjacent(hex_id)
+
+    def within(self, hex_id: str, radius: int) -> tuple[str, ...]:
+        """The worlds within ``radius`` parsecs, excluding ``hex_id`` itself."""
+        return self.geometry.within(hex_id, radius)
 
     def __iter__(self) -> Iterable[World]:
         return iter(self.worlds.values())
@@ -206,6 +269,12 @@ class Squadron:
     def capacity(self) -> int:
         return self.cls.capacity(self.reduced)
 
+    def copy(self) -> "Squadron":
+        new = Squadron.__new__(Squadron)
+        new.__dict__.update(self.__dict__)
+        new.troops = list(self.troops)
+        return new
+
     def damage_value(self) -> int:
         """Defence factors removed by reducing (or destroying) this squadron."""
         if self.reduced or self.cls.reduced is None:
@@ -237,6 +306,11 @@ class TroopUnit:
         if self.losses >= 100:
             return 0
         return max(0, self.cls.factor * (100 - self.losses) // 100)
+
+    def copy(self) -> "TroopUnit":
+        new = TroopUnit.__new__(TroopUnit)
+        new.__dict__.update(self.__dict__)
+        return new
 
     def combat_strength(self, world: World | None = None) -> float:
         """Current strength after doubling for armour and elite status."""
@@ -276,6 +350,11 @@ class Admiral:
     def effective_precedence(self) -> int:
         return 0 if self.warrant else self.precedence
 
+    def copy(self) -> "Admiral":
+        new = Admiral.__new__(Admiral)
+        new.__dict__.update(self.__dict__)
+        return new
+
 
 @dataclass
 class Fleet:
@@ -292,8 +371,33 @@ class Fleet:
     def side(self) -> str:
         return side_of(self.navy)
 
+    def copy(self) -> "Fleet":
+        new = Fleet.__new__(Fleet)
+        new.__dict__.update(self.__dict__)
+        new.squadrons = list(self.squadrons)
+        new.plot = dict(self.plot)
+        return new
+
 
 # --------------------------------------------------------------------------
+def _copy_pools(pools: dict, admirals: dict[int, Admiral]) -> dict:
+    """Copy the reinforcement pools, sharing the frozen counter classes.
+
+    A pool value is a list of counters waiting to enter play (frozen class
+    records, so shareable) or of admirals (mutable, and the same objects as
+    ``GameState.admirals``, so remapped onto the copies), or the odd scalar.
+    """
+    out = {}
+    for key, value in pools.items():
+        if not isinstance(value, list):
+            out[key] = value
+        elif value and isinstance(value[0], Admiral):
+            out[key] = [admirals.get(a.uid, a) for a in value]
+        else:
+            out[key] = list(value)
+    return out
+
+
 @dataclass
 class GameState:
     world_map: WorldMap
@@ -315,6 +419,41 @@ class GameState:
     options: dict = field(default_factory=lambda: {
         "black_globes": True, "jump_troops": True,
         "squadron_quality": True, "surprise_attack": False})
+
+    # -- copying -----------------------------------------------------------
+    def clone(self, keep_log: bool = False) -> "GameState":
+        """An independent copy of everything the engine writes to.
+
+        ``copy.deepcopy`` is correct but costs roughly a tenth of a second a
+        call, because it also walks the frozen :class:`SquadronClass` and
+        :class:`TroopClass` records, the xboat route list and the whole log.
+        None of those are ever mutated, so a rollout can share them.  What has
+        to be copied is the position itself: worlds, squadrons, troops,
+        admirals, fleets, and the reinforcement pools that hold them.
+
+        Admirals live in two places at once -- ``self.admirals`` and the
+        ``*_admirals`` pools -- and the engine mutates them through either
+        handle, so the pool entries are remapped onto the copied admirals by
+        uid rather than copied a second time.
+        """
+        new = GameState.__new__(GameState)
+        new.world_map = self.world_map.copy()
+        new.turn = self.turn
+        new.squadrons = {u: s.copy() for u, s in self.squadrons.items()}
+        new.troops = {u: t.copy() for u, t in self.troops.items()}
+        new.admirals = {u: a.copy() for u, a in self.admirals.items()}
+        new.fleets = {u: f.copy() for u, f in self.fleets.items()}
+        new.pools = _copy_pools(self.pools, new.admirals)
+        new.replacement_points = {side: dict(counts) for side, counts
+                                  in self.replacement_points.items()}
+        new.secret_base = self.secret_base
+        new.secret_base_revealed = self.secret_base_revealed
+        new.game_over = self.game_over
+        new.result = self.result
+        new.log = list(self.log) if keep_log else []
+        new._next_uid = self._next_uid
+        new.options = dict(self.options)
+        return new
 
     # -- identity helpers --------------------------------------------------
     def new_uid(self) -> int:

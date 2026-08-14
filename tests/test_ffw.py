@@ -5,7 +5,9 @@ Run with ``python -m pytest tests`` or ``python tests/test_ffw.py``.
 
 from __future__ import annotations
 
+import copy
 import os
+import random
 import sys
 import unittest
 
@@ -13,11 +15,11 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ffw import hexmap, oob, tables                                  # noqa: E402
+from ffw import features, hexmap, oob, tables                        # noqa: E402
 from ffw.engine import Engine, can_refuel_at, new_game, play         # noqa: E402
 from ffw.state import IMPERIAL, ZHODANI, WorldMap                    # noqa: E402
-from ffw.agents import (HeuristicAgent, RandomAgent, ScriptedAgent,  # noqa: E402
-                        NeuralAgent, HumanAgent)
+from ffw.agents import (HeuristicAgent, LookaheadAgent,           # noqa: E402
+                        RandomAgent, ScriptedAgent, NeuralAgent, HumanAgent)
 
 
 class TestHexGeometry(unittest.TestCase):
@@ -707,3 +709,230 @@ class TestEvaluatorHonesty(unittest.TestCase):
         report = evaluator_report(Echo(), games=3, seed=6, max_turns=14)
         self.assertLess(abs(report["skill_over_baseline"]), 0.05,
                         "echoing one feature must not read as skill")
+
+
+class TestFastForwardModel(unittest.TestCase):
+    """The copy and the distance tables the search agent is built on.
+
+    These are pure optimisations, so what has to be proved is that they changed
+    nothing: a cloned position must play out exactly as a deep-copied one, and
+    the cached geometry must answer exactly what the full scan answered.
+    """
+
+    @staticmethod
+    def digest(state):
+        parts = ["%d" % state.turn, "%.3f" % state.victory_margin()]
+        for h, w in sorted(state.world_map.worlds.items()):
+            parts.append("%s%s%d%d" % (h, w.control, w.sdb_losses,
+                                       w.defense_losses))
+        for u, sq in sorted(state.squadrons.items()):
+            parts.append("S%d%s%s%s" % (u, sq.location, sq.reduced, sq.troops))
+        for u, t in sorted(state.troops.items()):
+            parts.append("T%d%s%d%s" % (u, t.location, t.losses, t.aboard))
+        for u, f in sorted(state.fleets.items()):
+            parts.append("F%d%s%s%s" % (u, f.location, f.active,
+                                        sorted(f.plot.items())))
+        for u, a in sorted(state.admirals.items()):
+            parts.append("A%d%s%s" % (u, a.location, a.fleet))
+        return "|".join(parts)
+
+    @staticmethod
+    def run_on(state, turns, seed):
+        engine = Engine(state, HeuristicAgent(IMPERIAL, seed=seed),
+                        HeuristicAgent(ZHODANI, seed=seed + 1),
+                        rng=random.Random(seed))
+        for _ in range(turns):
+            if state.game_over:
+                break
+            engine.play_turn()
+        return state
+
+    def setUp(self):
+        self.state = self.run_on(new_game(seed=7), 5, 7)
+
+    def test_clone_plays_out_exactly_as_a_deep_copy(self):
+        fast = self.run_on(self.state.clone(), 4, 21)
+        slow = self.run_on(copy.deepcopy(self.state), 4, 21)
+        self.assertEqual(self.digest(fast), self.digest(slow))
+
+    def test_clone_does_not_leak_into_the_original(self):
+        before = self.digest(self.state)
+        self.run_on(self.state.clone(), 3, 33)
+        self.assertEqual(self.digest(self.state), before)
+
+    def test_admirals_in_the_pools_are_the_cloned_ones(self):
+        """An admiral is reachable through two handles and must stay one object."""
+        clone = self.state.clone()
+        pool = [a for a in clone.pools["imperial_admirals"]]
+        self.assertTrue(pool, "expected admirals still waiting off-map")
+        for admiral in pool:
+            self.assertIs(admiral, clone.admirals[admiral.uid])
+            self.assertIsNot(admiral, self.state.admirals[admiral.uid])
+
+    def test_geometry_matches_a_full_scan(self):
+        world_map = self.state.world_map
+        for origin in list(world_map.worlds)[::17]:
+            for radius in (1, 2, 4):
+                scan = [h for h in world_map.worlds
+                        if 0 < hexmap.distance(origin, h) <= radius]
+                self.assertEqual(list(world_map.within(origin, radius)), scan)
+            near = [h for h in world_map.worlds
+                    if hexmap.distance(origin, h) <= 1]
+            self.assertEqual(sorted(world_map.adjacent(origin)), sorted(near))
+
+    def test_squadron_index_matches_a_direct_count(self):
+        """The tallied index must score a destination exactly as a fresh scan."""
+        agent = HeuristicAgent(IMPERIAL, seed=1)
+        index = agent.squadron_index(self.state, IMPERIAL)
+        for dest in list(self.state.world_map.worlds)[::23]:
+            with_index = agent.score_destination(self.state, IMPERIAL, "1910",
+                                                 dest, 0, index)
+            without = agent.score_destination(self.state, IMPERIAL, "1910",
+                                              dest, 0)
+            self.assertAlmostEqual(with_index, without, places=9)
+
+
+class TestSearchAgent(unittest.TestCase):
+    """The lookahead agent is the one architecture that decides by simulation."""
+
+    def test_rollout_work_stays_inside_its_budget(self):
+        state = new_game(seed=11)
+        agent = LookaheadAgent(IMPERIAL, seed=1, candidates=3, rollouts=1,
+                               horizon=2, budget=4)
+        engine = Engine(state, agent, HeuristicAgent(ZHODANI, seed=2),
+                        rng=random.Random(11))
+        turns = 6
+        for _ in range(turns):
+            engine.play_turn()
+        ceiling = turns * agent.budget * agent.candidates * agent.rollouts \
+            * agent.horizon
+        self.assertLessEqual(agent.rollouts_played, ceiling)
+        self.assertGreater(agent.rollouts_played, 0,
+                           "the agent never actually searched")
+
+    def test_a_bigger_budget_searches_more(self):
+        def played(budget):
+            state = new_game(seed=11)
+            agent = LookaheadAgent(IMPERIAL, seed=1, budget=budget)
+            engine = Engine(state, agent, HeuristicAgent(ZHODANI, seed=2),
+                            rng=random.Random(11))
+            for _ in range(5):
+                engine.play_turn()
+            return agent.rollouts_played
+        self.assertLess(played(2), played(8))
+
+
+class TestFreeWorlds(unittest.TestCase):
+    """Undefended neutrals: fifty-five victory points nobody was collecting."""
+
+    def setUp(self):
+        self.state = new_game(seed=5)
+        self.agent = ScriptedAgent(IMPERIAL, seed=1)
+
+    def test_eighteen_neutrals_have_no_defences_at_all(self):
+        free = [w for w in self.state.world_map
+                if w.owner == "neutral" and not w.defense_battalions and not w.sdb]
+        self.assertEqual(len(free), 18)
+        self.assertAlmostEqual(sum(w.tech_level / 2.0 for w in free), 55.0)
+
+    def test_a_defended_world_is_not_claimable(self):
+        regina = next(w for w in self.state.world_map if w.name == "Regina")
+        self.assertFalse(self.agent.claimable(self.state, ZHODANI, regina,
+                                              carrying=50))
+
+    def test_an_airless_free_world_needs_no_troops(self):
+        """Rule 5 lets a warship garrison a vacuum world that has surrendered."""
+        quare = next(w for w in self.state.world_map if w.name == "Quare")
+        self.assertEqual(quare.atmosphere, "vacuum")
+        self.assertTrue(self.agent.claimable(self.state, IMPERIAL, quare,
+                                             carrying=0))
+
+    def test_a_breathable_free_world_needs_a_garrison(self):
+        pequan = next(w for w in self.state.world_map if w.name == "Pequan")
+        self.assertEqual(pequan.atmosphere, "breathable")
+        self.assertFalse(self.agent.claimable(self.state, IMPERIAL, pequan,
+                                              carrying=0))
+        self.assertTrue(self.agent.claimable(self.state, IMPERIAL, pequan,
+                                             carrying=1))
+
+    def test_an_enemy_presence_blocks_the_claim(self):
+        pequan = next(w for w in self.state.world_map if w.name == "Pequan")
+        squadron = next(s for s in self.state.squadrons.values()
+                        if s.side == ZHODANI)
+        squadron.location = pequan.hex
+        self.assertFalse(self.agent.claimable(self.state, IMPERIAL, pequan,
+                                              carrying=10))
+
+    def test_pickets_need_markers_the_reorganiser_would_have_spent(self):
+        """Without a reserve the main effort absorbs every fleet marker."""
+        from ffw.engine import reorganise_fleets
+        state = new_game(seed=5)
+        engine = Engine(state, ScriptedAgent(IMPERIAL, seed=1),
+                        ScriptedAgent(ZHODANI, seed=2), rng=random.Random(5))
+        for _ in range(4):
+            engine.play_turn()
+        reorganise_fleets(state, IMPERIAL, reserve=0)
+        without = sum(1 for f in state.fleets.values()
+                      if not f.active and f.side == IMPERIAL)
+        reorganise_fleets(state, IMPERIAL, reserve=2)
+        with_reserve = sum(1 for f in state.fleets.values()
+                           if not f.active and f.side == IMPERIAL)
+        self.assertGreaterEqual(with_reserve, without)
+
+    def test_the_behaviour_claims_more_worlds_than_its_absence(self):
+        def held(pickets):
+            state = new_game(seed=204)
+            play(state, ScriptedAgent(IMPERIAL, seed=1, pickets=pickets),
+                 ScriptedAgent(ZHODANI, seed=2, pickets=pickets), max_turns=24)
+            return sum(1 for w in state.world_map
+                       if w.owner == "neutral" and not w.defense_battalions
+                       and not w.sdb and w.control is not None)
+        self.assertGreater(held(True), held(False))
+
+
+class TestEvaluatorTargets(unittest.TestCase):
+    """One label per game is the reason the evaluator learned so little."""
+
+    def test_final_labels_are_constant_within_a_game(self):
+        from ffw.training import label_positions
+        vectors = [np.zeros(len(features.FEATURE_NAMES)) for _ in range(5)]
+        labels = label_positions(vectors, 120.0, target="final")
+        self.assertEqual(len(set(labels)), 1)
+
+    def test_delta_labels_track_the_change_in_margin(self):
+        from ffw.training import label_positions, DELTA_SCALE
+        import math
+        column = features.INDEX["vp_margin"]
+        margins = [0.0, 30.0, 60.0, 60.0, 60.0]
+        vectors = []
+        for m in margins:
+            v = np.zeros(len(features.FEATURE_NAMES))
+            v[column] = m / 300.0
+            vectors.append(v)
+        labels = label_positions(vectors, 60.0, target="delta", horizon=2)
+        self.assertAlmostEqual(labels[0], math.tanh(60.0 / DELTA_SCALE), places=6)
+        self.assertAlmostEqual(labels[2], 0.0, places=6)
+        self.assertGreater(len(set(labels)), 1)
+
+    def test_the_target_travels_with_the_weights(self):
+        """A delta net and a final net are different quantities; don't mix them."""
+        from ffw.agents import ValueNetwork
+        net = ValueNetwork(hidden=4, seed=0)
+        net.target, net.horizon = "delta", 6
+        restored = ValueNetwork.from_dict(net.to_dict())
+        self.assertEqual(restored.target, "delta")
+        self.assertEqual(restored.horizon, 6)
+
+    def test_echoing_the_score_earns_no_skill_on_the_delta_target(self):
+        from ffw.training import evaluator_report
+
+        class Echo:
+            target = "delta"
+            horizon = 6
+
+            def __call__(self, vector):
+                return float(vector[features.INDEX["vp_margin"]])
+
+        report = evaluator_report(Echo(), games=3, seed=6, max_turns=14)
+        self.assertEqual(report["target"], "delta")
+        self.assertLess(abs(report["skill_over_baseline"]), 0.05)

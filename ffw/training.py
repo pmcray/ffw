@@ -317,16 +317,67 @@ def train_league(generations: int = 6, population: int = 8, elite: int = 3,
 
 
 # --------------------------------------------------------------------------
+#: how many turns ahead the ``delta`` target looks, and the victory-point
+#: swing that saturates it
+DELTA_HORIZON = 6
+DELTA_SCALE = 40.0
+
+
+def margins_of(vectors) -> list[float]:
+    """Recover the victory margin at each recorded position.
+
+    ``vp_margin`` is one of the recorded features, so the margin at every turn
+    of a game comes back out of the feature matrix without the engine having to
+    hand it over separately.
+    """
+    column = features.INDEX["vp_margin"]
+    return [float(v[column]) * 300.0 for v in vectors]
+
+
+def label_positions(vectors, final_margin: float, target: str = "final",
+                    horizon: int = DELTA_HORIZON) -> list[float]:
+    """One label per recorded position, in ``[-1, 1]``, Zhodani-positive.
+
+    ``final``
+        every position in a game carries that game's final margin.  Simple, and
+        the reason the evaluator is so weak: a game is one independent sample
+        however many positions it contributes, so seventy games is seventy
+        samples.
+    ``delta``
+        each position carries the change in margin over the next ``horizon``
+        turns.  Neighbouring positions now have genuinely different labels, so
+        a run of seventy games is thousands of samples rather than seventy, and
+        the quantity being predicted -- is this position about to improve --
+        is the one a thermostat and a search leaf actually want.
+    """
+    margins = margins_of(vectors)
+    if target == "final":
+        return [math.tanh(final_margin / 200.0)] * len(margins)
+    if target != "delta":
+        raise ValueError("unknown target %r" % (target,))
+    horizon = max(1, int(horizon))
+    ahead = margins + [final_margin]
+    end = len(margins)
+    return [math.tanh((ahead[min(i + horizon, end)] - margins[i]) / DELTA_SCALE)
+            for i in range(end)]
+
+
 def train_value_network(games: int = 18, epochs: int = 80, hidden: int = 12,
                         seed: int = 0, network: ValueNetwork | None = None,
                         max_turns: int = 45, agents=None, progress=None,
-                        side: str = ZHODANI, weights: dict | None = None):
-    """Regression on played games: predict the final margin from a position.
+                        side: str = ZHODANI, weights: dict | None = None,
+                        target: str = "final", horizon: int = DELTA_HORIZON):
+    """Regression on played games: predict how a position turns out.
 
     One network serves both players -- ``features.perspective`` flips the state
     vector and ``NeuralAgent`` negates the score for the Imperium -- so games
     are collected from both seats.  ``side`` chooses whose doctrine weights are
     jittered to generate the learner's play, not which seat is sampled.
+
+    ``target`` selects what the network is asked to predict; see
+    ``label_positions``.  It is recorded on the network, because a net trained
+    on one target means something quite different from a net trained on the
+    other and the two must not be silently swapped.
 
     Returns ``(network, final_training_loss)``.  The loss is not a measure of
     quality: see ``evaluator_report`` for that, and read the module docstring
@@ -378,9 +429,9 @@ def train_value_network(games: int = 18, epochs: int = 80, hidden: int = 12,
         margin, result, positions = play_match(imperial, zhodani,
                                                seed=match_seed,
                                                max_turns=max_turns, record=True)
-        label = math.tanh(margin / 200.0)
         margins.append(margin)
-        for vector in positions:
+        labels = label_positions(positions, margin, target, horizon)
+        for vector, label in zip(positions, labels):
             xs.append(features.perspective(vector, ZHODANI))
             ys.append(label)
         if progress is not None:
@@ -390,13 +441,16 @@ def train_value_network(games: int = 18, epochs: int = 80, hidden: int = 12,
     x = np.asarray(xs)
     y = np.asarray(ys)
     loss = net.train(x, y, epochs=epochs, lr=0.03, seed=seed)
+    net.target = target                          # type: ignore[attr-defined]
+    net.horizon = horizon                        # type: ignore[attr-defined]
     net.label_spread = float(np.std(y))          # type: ignore[attr-defined]
     net.margin_spread = float(np.std(margins))   # type: ignore[attr-defined]
     return net, loss
 
 
 def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
-                     max_turns: int = 30):
+                     max_turns: int = 30, target: str | None = None,
+                     horizon: int | None = None):
     """How well the network predicts outcomes on games it was not trained on.
 
     A regression loss near zero means nothing if every training label was the
@@ -404,11 +458,18 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
     worlds to Zhodani control on turn 1 is a position no game ever reaches, so
     scoring it measures extrapolation rather than judgement.  The honest test
     is held-out games -- play some, and see whether the network's opinion of
-    each position correlates with how that game actually ended.
+    each position correlates with what actually happened next.
+
+    The network is scored against the target it was trained on: a net fitted to
+    final margins is asked about final margins, one fitted to margin deltas is
+    asked about deltas.  Grading a delta net on final margins would report a
+    number close to zero and mean nothing by it.
 
     Returns the correlation, the spread of predictions (near zero means the
     network has collapsed onto the mean), and the mean absolute error.
     """
+    target = target or getattr(net, "target", "final")
+    horizon = horizon or getattr(net, "horizon", DELTA_HORIZON)
     xs: list[np.ndarray] = []
     ys: list[float] = []
     game_of: list[int] = []
@@ -419,14 +480,14 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
         zhodani = opponents[(g + 1) % len(opponents)](ZHODANI, seed=match_seed + 1)
         margin, _, positions = play_match(imperial, zhodani, seed=match_seed,
                                           max_turns=max_turns, record=True)
-        label = math.tanh(margin / 200.0)
-        for vector in positions:
+        labels = label_positions(positions, margin, target, horizon)
+        for vector, label in zip(positions, labels):
             xs.append(features.perspective(vector, ZHODANI))
             ys.append(label)
             game_of.append(g)
     if len(xs) < 3:
         return {"correlation": 0.0, "spread": 0.0, "mae": 0.0, "positions": 0,
-                "games": games, "ci": (0.0, 0.0)}
+                "games": games, "ci": (0.0, 0.0), "target": target}
     predictions = np.array([net(v) for v in xs])
     labels = np.asarray(ys)
     groups = np.asarray(game_of)
@@ -473,6 +534,8 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
     baseline = corr_of(margin_column, labels)
     early = turn_column < (12.0 / 60.0)
     return {"correlation": correlation,
+            "target": target,
+            "horizon": horizon,
             "ci": (low, high),
             "baseline_correlation": baseline,
             "skill_over_baseline": correlation - baseline,

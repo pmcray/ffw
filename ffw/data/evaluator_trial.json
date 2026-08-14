@@ -1,0 +1,60 @@
+{
+ "reports": {
+  "final": {
+   "correlation": 0.8154566455607138,
+   "target": "final",
+   "horizon": 6,
+   "baseline_correlation": 0.7143719488839595,
+   "skill_over_baseline": 0.10108469667675435,
+   "early_correlation": 0.6293538968187736,
+   "early_baseline": 0.583851634040187,
+   "early_positions": 200,
+   "spread": 0.161070759924073,
+   "label_spread": 0.23155903494745714,
+   "mae": 0.09884349587804732,
+   "positions": 600,
+   "games": 20
+  },
+  "delta": {
+   "correlation": 0.4631367439756722,
+   "target": "delta",
+   "horizon": 6,
+   "baseline_correlation": -0.141912967873452,
+   "skill_over_baseline": 0.6050497118491243,
+   "early_correlation": 0.12185212675316516,
+   "early_baseline": 0.10323133765818016,
+   "early_positions": 200,
+   "spread": 0.21720358504155104,
+   "label_spread": 0.4214131859292305,
+   "mae": 0.2965448482033942,
+   "positions": 600,
+   "games": 20
+  }
+ },
+ "matches": {
+  "neural": {
+   "advantage": 10.15,
+   "stderr": 8.07535688925814,
+   "games": 10,
+   "verdict": "indistinguishable"
+  },
+  "lookahead_delta": {
+   "advantage": -16.15,
+   "stderr": 8.359351051367565,
+   "games": 5,
+   "verdict": "indistinguishable"
+  },
+  "lookahead_final": {
+   "advantage": 3.3,
+   "stderr": 16.012768342794445,
+   "games": 5,
+   "verdict": "indistinguishable"
+  },
+  "raw_lookahead": {
+   "advantage": -2.95,
+   "stderr": 17.54946580383574,
+   "games": 5,
+   "verdict": "indistinguishable"
+  }
+ }
+}

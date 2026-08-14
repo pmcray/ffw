@@ -63,12 +63,23 @@ def run_league(start, generations=6, population=10, elite=4, games=2,
 
 
 # --------------------------------------------------------------------------
-def run_network(start, champions=None, games=70, max_turns=30, seed=13):
-    print("== value network, %d games ==" % games, flush=True)
+def run_network(start, champions=None, games=70, max_turns=30, seed=13,
+                target="final"):
+    """Fit the value network.
+
+    ``target`` is "final" (one label per game, the historical default) or
+    "delta" (the change in margin over the next few turns).  The delta target
+    fits a demonstrably better evaluator -- six times the skill over the
+    trivial baseline -- but whether it makes ``NeuralAgent`` play better is
+    still unresolved, so the default stays where the measurements are.  See
+    ``tools/evaluator_trial.py``.
+    """
+    print("== value network, %d games, %s target ==" % (games, target),
+          flush=True)
     weights = (champions or {}).get(ZHODANI)
     net, loss = train_value_network(
         games=games, epochs=90, hidden=16, seed=seed, max_turns=max_turns,
-        side=ZHODANI, weights=weights,
+        side=ZHODANI, weights=weights, target=target,
         progress=lambda g, m, r: (
             print("   game %2d  margin %+7.1f  %s   %s"
                   % (g, m, r, elapsed(start)), flush=True)
@@ -80,6 +91,9 @@ def run_network(start, champions=None, games=70, max_turns=30, seed=13):
     print("   held-out: corr %+.3f  90%% CI [%+.2f, %+.2f]  over %d games   %s"
           % (report["correlation"], report["ci"][0], report["ci"][1],
              report["games"], elapsed(start)), flush=True)
+    print("   trivial baseline %+.3f  ->  skill %+.3f"
+          % (report["baseline_correlation"], report["skill_over_baseline"]),
+          flush=True)
     return net, report
 
 

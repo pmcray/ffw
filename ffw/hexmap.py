@@ -26,12 +26,21 @@ def format_hex(col: int, row: int) -> str:
     return "%02d%02d" % (col, row)
 
 
+#: hex id -> cube coordinate.  The map is a few hundred hexes and the search
+#: agents ask for distances by the million, so the parse is done once each.
+_CUBE: dict[str, tuple[int, int, int]] = {}
+
+
 def to_cube(hex_id: str) -> tuple[int, int, int]:
     """Offset ("even-q", even columns pushed down) to cube coordinates."""
-    col, row = parse(hex_id)
-    x = col
-    z = row - (col + (col & 1)) // 2
-    return x, -x - z, z
+    cube = _CUBE.get(hex_id)
+    if cube is None:
+        col, row = parse(hex_id)
+        x = col
+        z = row - (col + (col & 1)) // 2
+        cube = (x, -x - z, z)
+        _CUBE[hex_id] = cube
+    return cube
 
 
 def distance(a: str, b: str) -> int:

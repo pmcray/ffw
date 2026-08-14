@@ -21,7 +21,7 @@ ffw/                      the game
   training.py             cross-entropy doctrine search and self-play regression
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural, human
-tests/test_ffw.py         69 tests, including the rulebook's worked examples
+tests/test_ffw.py         87 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -29,7 +29,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 69 tests, about 2.5 minutes
+python -m unittest discover tests          # 87 tests, about 40 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -51,8 +51,11 @@ print(result, state.victory_margin())
 draw_map(state, recorder[-1])
 ```
 
-A full 40-week campaign runs in about four seconds, which is what makes
-training practical.
+A full 40-week campaign runs in about half a second, which is what makes
+training practical.  It used to take four; the doctrine was asking "what is
+near this system" by scanning all 146 worlds for every candidate destination of
+every fleet, and answering that once instead of thousands of times made the
+whole engine nine times faster without changing a single decision it takes.
 
 ## What is implemented
 
@@ -119,13 +122,47 @@ Five agents, differing in *how* they decide:
 | agent | approach | speed |
 |---|---|---|
 | `RandomAgent` | legal random moves — the control condition | fastest |
-| `HeuristicAgent` | weighted feature sum over every reachable system | ~4 s/game |
-| `ScriptedAgent` | the same plus a historical opening | ~4 s/game |
-| `LookaheadAgent` | rolls the game forward for each shortlisted destination | ~60 s/game |
-| `NeuralAgent` | a self-play value network retunes the doctrine's aggression | ~5 s/game |
+| `HeuristicAgent` | weighted feature sum over every reachable system | ~0.5 s/game |
+| `ScriptedAgent` | the same plus a historical opening | ~0.5 s/game |
+| `LookaheadAgent` | rolls the game forward for each shortlisted destination | ~25 s/game |
+| `NeuralAgent` | a self-play value network retunes the doctrine's aggression | ~0.7 s/game |
 
-They share one weight vector of 18 named parameters, so a doctrine trained by
-one can be handed to another.
+Four of the five share one weight vector of 19 named parameters, so a doctrine
+trained by one can be handed to another — which also means they are four
+tunings of a single way of thinking.  `LookaheadAgent` is the outlier: it uses
+the doctrine only to *propose* a shortlist and then decides by simulating each
+candidate, so a match against it compares two architectures rather than two
+weight vectors.
+
+### The search agent, and what it cost to make it usable
+
+`LookaheadAgent` used to take about fifteen seconds a turn, which put it out of
+reach of any measurement worth having: a single paired comparison would have
+taken most of a day. It now takes about two thirds of a second a turn, a
+twenty-three-fold speedup, from three changes:
+
+- **`GameState.clone`** instead of `copy.deepcopy`. Deep-copying a position
+  walks the frozen counter classes, the route list and the whole log, none of
+  which is ever written to. Cloning copies only what the engine mutates —
+  worlds, squadrons, troops, admirals, fleets, pools — and shares the rest:
+  0.3 ms against 5.8 ms, and a test plays a cloned position and a deep-copied
+  one forward in lockstep to prove they are the same game.
+- **Cached geometry.** Which worlds lie within *n* parsecs of a hex depends
+  only on the map, and `state.Geometry` answers it once. This is what made the
+  ordinary engine nine times faster too.
+- **Common random numbers, and a budget.** Every candidate for a decision now
+  rolls out on the *same* seed, so the comparison isolates the destination
+  rather than the dice — the same trick `play_paired` uses on whole games — and
+  only the few most important fleets each turn get searched at all.
+
+Being affordable is not the same as being good, and the honest result is that
+it is **not yet stronger than the doctrine it samples from**: −14.7 ± 6.5 VP
+against `ScriptedAgent` over eight paired games. Two turns of war barely move
+the scoreboard, so the raw margin at the leaf is mostly combat dice. The agent
+accepts an `evaluator` for exactly that reason — a value network trained on
+margin deltas, scoring the leaf instead of the scoreboard — but at the search
+budget tested that did not rescue it either. `tools/lookahead_check.py` reruns
+the comparison.
 
 ### Training
 
@@ -149,11 +186,42 @@ The value network is side-agnostic: `features.perspective` flips the state
 vector so a single network serves both players, and `NeuralAgent` negates its
 score for the Imperium. Games are collected from both seats for that reason.
 
-**How much to trust the value network.** Not very much, at notebook scale, and
-the code is built to make that visible. Every position in a game is labelled
-with that game's final margin, so the independent sample size is the number of
-*games*, not positions — twenty games is twenty samples however many hundred
-rows the training matrix has. `evaluator_report` therefore scores the network on
+**What the network is asked to predict.** There are two targets, and the choice
+matters more than any other detail of the training loop.
+
+- `target='final'` labels every position in a game with that game's final
+  victory margin. Simple, and the reason the evaluator learned so little: the
+  independent sample size is the number of *games*, not positions — twenty
+  games is twenty samples however many hundred rows the training matrix has.
+- `target='delta'` labels each position with the change in margin over the next
+  six turns. Neighbouring positions now carry genuinely different labels, sixty
+  games becomes thousands of samples, and the quantity predicted — *is this
+  position about to improve* — is the one a thermostat and a search leaf
+  actually want.
+
+Trained on the same sixty games and each graded against its own target:
+
+| target | held-out correlation | trivial baseline | skill over baseline |
+|---|---|---|---|
+| `final` | +0.815 [+0.75, +0.86] | +0.714 | **+0.101** |
+| `delta` | +0.463 [+0.36, +0.57] | −0.142 | **+0.605** |
+
+The delta network's raw correlation is *lower* and its real skill is six times
+higher, which is the whole point. The feature vector contains the current
+victory margin; late in a game that margin more or less *is* the final result,
+so a network that echoes one column already scores +0.71 against the `final`
+target without knowing anything. Against the `delta` target that same echo
+scores −0.14, so every point of the delta network's +0.46 is earned.
+
+Whether it plays better is a separate question, and the answer so far is *not
+provably*: `NeuralAgent` driven by the delta network beat the same agent driven
+by the final-margin network by +10.2 ± 8.1 VP over ten paired games — pointing
+the right way, not resolved. `tools/evaluator_trial.py` runs the whole
+comparison, and the network records which target it was fitted to so the two
+cannot be silently swapped.
+
+**How much to trust either of them.** Not very much at notebook scale, and the
+code is built to make that visible. `evaluator_report` scores the network on
 held-out games and bootstraps the correlation **over games**:
 
 ```python
@@ -164,20 +232,10 @@ print(evaluator_report(net, games=8))
 ```
 
 At notebook scale expect a positive point estimate with an interval straddling
-zero. Trained at scale (70 games, the 43-feature encoding) it reaches +0.84 with
-a 90% interval of [+0.74, +0.89] — but that number needs reading carefully, and
-`evaluator_report` now reports what it needs:
-
-```
-overall  network +0.835   trivial vp_margin baseline +0.701   skill +0.134
-early    network +0.655   baseline +0.657   (before turn 12)
-```
-
-The feature vector contains the current victory margin, and late in a game that
-*is* the answer, so a network echoing one column already scores +0.70. The
-network's genuine contribution over that baseline is +0.13 — and in the early
-game, the only place where an evaluator can show it knows something the
-scoreboard has not already revealed, it adds **nothing**. That is why
+zero. `evaluator_report` also reports the early game separately — before turn
+twelve, the only place where an evaluator can show it knows something the
+scoreboard has not already revealed. On the `final` target the network adds
+essentially nothing there (+0.63 against a +0.58 baseline), which is why
 `NeuralAgent` nudges its doctrine rather than choosing moves with it.
 
 Two earlier versions of this training loop were broken in ways the regression
@@ -296,11 +354,39 @@ and are equipped for it. The armistice rule reads as the counterweight: from
 turn 26 the Zhodani may end the war unilaterally at a cost of two victory
 levels, which turns a typical +150 into a stalemate.
 
-One clear gap remains, and it is doctrine rather than rules: **11 of the 18
-undefended neutral worlds are never claimed by anybody**, 55 VP left on the
-table, and the Imperium takes only 2 of the 27 neutrals. Those worlds need a
-single troop factor to hold. That is the most promising target for training,
-and it is not something a fixed doctrine is likely to find by hand.
+### The free worlds
+
+Eighteen of the Marches' neutral worlds have no defence battalions and no
+system defence boats. Fifty-five victory points sit on them, and five of them
+are airless, which under rule 5 means an armed squadron can garrison them with
+no troops at all. Left to itself the doctrine finished a war having claimed
+**0.8 of the eighteen for the Imperium** and left nine unclaimed by anyone.
+
+The reason turned out not to be the scoring. A fleet is an all-or-nothing
+instrument, and no undefended backwater is ever worth diverting a battle fleet
+for. `HeuristicAgent` now detaches a **picket** — one squadron on a spare fleet
+marker, carrying a token troop unit — to go and sit on one. Getting that to
+fire needed two things beyond the behaviour itself:
+
+- **Fleet markers.** A player has fourteen, and the reorganisation step spent
+  every one of them on the main effort, so the Imperium ended each turn with
+  zero spare and could never form a picket at all. `reorganise_fleets` now
+  takes a `reserve`.
+- **Range.** The free worlds sit eight to twelve parsecs from where the
+  Imperial fleets concentrate, far beyond one jump, so a picket has to be able
+  to make its way there over several turns and to refuel when it arrives —
+  which also means choosing a streamlined hull for the E-class ports.
+
+Measured over thirty games, the behaviour moves the Imperial share from 0.8
+worlds (1.5 VP) to 2.6 (7.0 VP), and drops the worlds nobody claims from 9.0 to
+7.3. Its effect on the final margin is **+4.8 ± 5.7 VP over fifty paired
+games** — the right sign, and smaller than the measurement can resolve. The
+honest reading is that the points are real and the detour costs most of what it
+earns; `tools/picket_check.py` reruns the whole comparison, reporting the
+worlds claimed as well as the margin, because the direct tally is far less
+noisy than a game result. Both halves can be switched off independently:
+`pickets=False` stops the detachment, `free_world=0` stops free worlds pulling
+on ordinary fleets.
 
 ## Known limits
 

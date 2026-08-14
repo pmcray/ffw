@@ -34,6 +34,12 @@ class ValueNetwork:
         self.w2 = rng.normal(0, 1.0 / math.sqrt(hidden), (hidden, 1))
         self.b2 = np.zeros(1)
         self.feature_version = features.FEATURE_VERSION
+        #: what the network was fitted to predict -- "final" for the game's
+        #: final margin, "delta" for the change in margin over the next few
+        #: turns.  The two are different quantities on the same scale, so the
+        #: label travels with the weights.
+        self.target = "final"
+        self.horizon = 0
 
     # -- inference ---------------------------------------------------------
     def __call__(self, x: np.ndarray) -> float:
@@ -78,6 +84,8 @@ class ValueNetwork:
         payload["feature_version"] = getattr(self, "feature_version",
                                              features.FEATURE_VERSION)
         payload["n_features"] = int(self.w1.shape[0])
+        payload["target"] = getattr(self, "target", "final")
+        payload["horizon"] = int(getattr(self, "horizon", 0))
         return payload
 
     @classmethod
@@ -102,6 +110,8 @@ class ValueNetwork:
                 "value network expects %d features, this build produces %d"
                 % (net.w1.shape[0], features.N_FEATURES))
         net.feature_version = features.FEATURE_VERSION
+        net.target = data.get("target", "final")
+        net.horizon = int(data.get("horizon", 0))
         return net
 
     def save(self, path: str) -> None:

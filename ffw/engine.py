@@ -379,13 +379,18 @@ def _release_marker(state: GameState, fleet: Fleet) -> None:
 
 
 def reorganise_fleets(state: GameState, side: str,
-                      max_size: int = MAX_FLEET_SIZE) -> None:
+                      max_size: int = MAX_FLEET_SIZE, reserve: int = 0) -> None:
     """Fleet adjustment step: keep fleets fast, coherent and the right size.
 
     Fleets are restricted by their slowest and thirstiest squadron, so the aim
     is homogeneous groups: squadrons are sorted into jump-number bands, each
     band is capped at ``max_size``, and markers freed by empty fleets are
     re-spent on the largest unattached concentrations.
+
+    ``reserve`` holds that many markers back unspent.  Markers are scarce -- a
+    player has fourteen and this step will happily consume every one on the
+    main effort -- so a doctrine that wants to detach a picket has to be given
+    the room to do it before the concentrations are re-formed.
     """
     # 1. prune fleets: drop squadrons that drag the fleet's jump number down,
     #    and trim any fleet over the size cap
@@ -444,6 +449,8 @@ def reorganise_fleets(state: GameState, side: str,
 
     # 3. spend spare markers on the biggest remaining concentrations
     spare = [f for f in state.fleets.values() if not f.active and f.side == side]
+    if reserve > 0:
+        spare = spare[:max(0, len(spare) - reserve)]
     order = sorted(loose.items(), key=lambda kv: (
         0 if kv[0] in REINFORCEMENT_BOXES else 1, -len(kv[1])))
     for hex_id, squadrons in order:

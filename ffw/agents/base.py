@@ -121,9 +121,8 @@ class Agent:
 
     def choose_retreat(self, state: GameState, side: str, hex_id: str,
                        jump: int, engine) -> str | None:
-        options = [h for h in state.world_map.worlds
-                   if h != hex_id and hexmap.distance(hex_id, h) <= jump
-                   and not state.squadrons_at(h, state.enemy_of(side))]
+        options = [h for h in state.world_map.within(hex_id, jump)
+                   if not state.squadrons_at(h, state.enemy_of(side))]
         if not options:
             return None
         friendly = [h for h in options if state.controls(h, side)]
@@ -333,5 +332,4 @@ class RandomAgent(Agent):
         if origin not in state.world_map.worlds:
             entry = state.world_map.entry_hexes.get(origin)
             return [entry] if entry else []
-        return [h for h in state.world_map.worlds
-                if 0 < hexmap.distance(origin, h) <= jump]
+        return list(state.world_map.within(origin, jump))
