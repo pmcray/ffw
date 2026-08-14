@@ -69,7 +69,7 @@ from ffw.agents import (RandomAgent, HeuristicAgent, ScriptedAgent,
 from ffw.viz import GameRecorder, draw_map, plot_history, front_line, COLORS
 from ffw.training import (play_match, train_weights, train_value_network,
                           tournament, save_agent, load_agent,
-                          evaluator_report)
+                          evaluator_report, seat_bias, play_paired)
 
 plt.rcParams['figure.facecolor'] = COLORS['background']
 print('ffw', ffw.__version__)"""),
@@ -444,10 +444,28 @@ ref_imp_w, ref_imp_net = load_reference('imperial')"""),
 
 md("""## 6. Comparing the AIs
 
-A round-robin: every agent plays every other on both sides, so the sides being
-unbalanced does not favour anyone. The score reported for an entry is its
-average victory margin *from its own point of view*, over all the games it
-played, on either side."""),
+Before comparing agents, measure the seat. Fifth Frontier War is asymmetric,
+and if one side wins by default then raw victory margins rank the seats rather
+than the players. So: run the *same* doctrine against itself and see what the
+Zhodani seat is worth."""),
+
+code("""bias = seat_bias(games=6, max_turns=30, seed=4)
+print('same doctrine on both sides: %+.1f VP to the Zhodani  (+/- %.1f)'
+      % (bias['mean_margin'], bias['stderr']))
+print('individual games:', [round(m) for m in bias['margins']])"""),
+
+md("""That number is large, and everything below has to be read against it.
+It is why the round-robin plays **paired games**: each matchup is played twice
+on one seed with the seats swapped, and what gets reported is the *difference*
+between the two halves. Sharing a seed means both halves start from the same
+deployment and reinforcement rolls, so most of the variance cancels and what
+is left is what the two agents did differently.
+
+Measured on this engine, pairing cuts the standard deviation of a comparison
+from about 36 VP to about 22. It costs two games instead of one, so for a fixed
+compute budget it buys roughly 15% tighter error bars — worth having, but the
+real gain is that the number now means "a outplayed b" rather than "a drew the
+better seat"."""),
 
 code("""entries = {
     'random':    lambda side, seed: RandomAgent(side, seed=seed),
@@ -462,8 +480,8 @@ table, summary = tournament(entries, games=1, max_turns=30, seed=5)
 print('%.0fs' % (time.time() - t0))"""),
 
 code("""names = list(entries)
-print('average VP margin, row = Imperial player, column = Zhodani player')
-print('(positive favours the Zhodani)')
+print('head-to-head advantage in victory points, row over column')
+print('(positive means the row agent outplayed the column agent)')
 print()
 print('%-11s' % '', ''.join('%11s' % n for n in names))
 for a in names:
@@ -472,22 +490,19 @@ for a in names:
     print('%-11s%s' % (a, row))
 
 print()
-print('%-11s %6s %6s %6s %6s %9s' % ('agent', 'games', 'wins', 'draws',
-                                     'losses', 'avg score'))
+print('%-11s %10s %9s %9s' % ('agent', 'advantage', 'std err', 'pairings'))
 for name in sorted(names, key=lambda n: -summary[n]['average']):
     s = summary[name]
-    print('%-11s %6d %6d %6d %6d %9.1f'
-          % (name, s['games'], s['wins'], s['draws'], s['losses'],
-             s['average']))"""),
+    print('%-11s %+10.1f %9.1f %9d'
+          % (name, s['average'], s['stderr'], s['pairings']))
+print()
+print('A gap smaller than about two standard errors is not a real difference.')"""),
 
-md("""The same caution applies here as to the value network, for the same
-reason. One game per pairing means each entry's average rests on eight games,
-and a single game swings by tens of victory points on the dice. That is enough
-to separate `random` from everything else — it loses by 60-plus VP a game,
-which is far outside the noise — and **not** enough to rank the four real
-agents against each other. Their ordering will change from run to run.
-
-Raise `games` if you want a ranking you can defend; the cost is linear."""),
+md("""`random` sits far below the rest — several standard errors clear, so
+that gap is real. The doctrine agents sit within a standard error or two of
+each other, which at this sample size means *we cannot tell them apart*, not
+that they are equal. Raise `games` to resolve them; the standard error falls
+as its square root."""),
 
 code("""fig, ax = plt.subplots(figsize=(9, 4))
 fig.patch.set_facecolor(COLORS['background'])

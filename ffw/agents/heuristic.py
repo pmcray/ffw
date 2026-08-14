@@ -113,12 +113,12 @@ class HeuristicAgent(Agent):
                 # cost an army, so they are best left behind the front
                 opposition = (world.defense_current
                               + state.garrison_strength(dest, enemy))
-                if carrying >= max(world.garrison_required(), opposition * 0.75):
+                if carrying >= max(world.garrison_required(side), opposition * 0.75):
                     score += w["takeable"] * min(2.0, carrying /
                                                  max(1.0, opposition + 1.0))
                 score += w["invasion"] * min(1.0, carrying / 300.0)
         else:
-            gap = world.garrison_required() - state.garrison_strength(dest, side)
+            gap = world.garrison_required(side) - state.garrison_strength(dest, side)
             if gap > 0:
                 score += w["garrison_gap"] * min(2.0, gap / 20.0)
             score += w["home_pull"] * 0.5
@@ -126,7 +126,7 @@ class HeuristicAgent(Agent):
             if carrying == 0:
                 waiting = sum(t.current for t in state.troops_at(dest, side)
                               if t.aboard is None and not t.guerrilla)
-                spare = max(0, waiting - world.garrison_required())
+                spare = max(0, waiting - world.garrison_required(side))
                 if spare > 0:
                     score += w["invasion"] * 0.6 * min(1.5, spare / 200.0)
 

@@ -465,3 +465,125 @@ class TestValueNetworkQuality(unittest.TestCase):
         self.assertTrue(np.allclose(
             features.perspective(features.perspective(raw, IMPERIAL), IMPERIAL),
             raw))
+
+
+class TestPairedEvaluation(unittest.TestCase):
+    """Paired games are what make agent comparisons mean anything here."""
+
+    def test_paired_advantage_is_antisymmetric(self):
+        from ffw.training import play_paired
+        a = lambda side, seed: ScriptedAgent(side, seed=seed)
+        b = lambda side, seed: RandomAgent(side, seed=seed)
+        forward, f1, f2 = play_paired(a, b, seed=3, max_turns=8)
+        reverse, r1, r2 = play_paired(b, a, seed=3, max_turns=8)
+        self.assertAlmostEqual(forward, -reverse, places=6)
+
+    def test_identical_agents_have_no_paired_advantage(self):
+        """Mirroring the same doctrine must cancel exactly, seat bias and all."""
+        from ffw.training import play_paired
+        same = lambda side, seed: ScriptedAgent(side, seed=seed)
+        advantage, first, second = play_paired(same, same, seed=5, max_turns=8)
+        self.assertAlmostEqual(advantage, 0.0, places=6)
+        self.assertAlmostEqual(first, second, places=6)
+
+    def test_tournament_table_is_antisymmetric(self):
+        from ffw.training import tournament
+        entries = {"scripted": lambda s, d: ScriptedAgent(s, seed=d),
+                   "random": lambda s, d: RandomAgent(s, seed=d)}
+        table, summary = tournament(entries, games=1, max_turns=8, seed=1)
+        self.assertAlmostEqual(table[("scripted", "random")],
+                               -table[("random", "scripted")], places=6)
+        for entry in summary.values():
+            self.assertIn("stderr", entry)
+            self.assertGreater(entry["pairings"], 0)
+
+    def test_seat_bias_is_reported(self):
+        from ffw.training import seat_bias
+        bias = seat_bias(games=2, max_turns=8, seed=2)
+        self.assertEqual(bias["games"], 2)
+        self.assertIn("mean_margin", bias)
+
+
+class TestAmphibiousCapability(unittest.TestCase):
+    """Regressions for two bugs that silently disarmed the Imperium."""
+
+    def test_home_worlds_need_no_garrison(self):
+        """Rule 5's garrison binds on a world you have *taken*, not your own.
+
+        A world cannot "revert to its original owner" when that owner already
+        holds it, and its defence battalions are its garrison.  Charging the
+        owner 1% of them locked 2296 factors of the Imperial army onto worlds
+        that needed no garrison at all.
+        """
+        world_map = WorldMap.load()
+        regina = world_map.get("2314")          # Imperial, 1500 battalions
+        self.assertEqual(regina.original_control, IMPERIAL)
+        self.assertEqual(regina.garrison_required(IMPERIAL), 0)
+        self.assertEqual(regina.garrison_required(ZHODANI), 15)
+        self.assertEqual(regina.garrison_required(), 15)
+        chronor = world_map.get("0708")         # Zhodani, 1000 battalions
+        self.assertEqual(chronor.garrison_required(ZHODANI), 0)
+        self.assertEqual(chronor.garrison_required(IMPERIAL), 10)
+
+    def test_a_unit_too_big_to_lift_does_not_block_smaller_ones(self):
+        """The loader must take the largest unit that *fits*, not give up.
+
+        Spare troops are offered biggest-first.  Stopping at the head of the
+        list meant a 500-factor army parked in front of a battle squadron's 20
+        factors of lift blocked every smaller unit behind it, so the Imperium --
+        whose army is mostly armies and corps -- never embarked anything.
+        """
+        from ffw import oob
+        from ffw.engine import _place_troop
+        state = new_game(seed=21)
+        agent = ScriptedAgent(IMPERIAL, seed=1)
+        fleet = next(f for f in state.fleets.values()
+                     if f.active and f.side == IMPERIAL and f.squadrons
+                     and f.location in state.world_map.worlds)
+        hex_id = fleet.location
+
+        # reduce the fleet to one battle squadron: 20 factors of lift, which no
+        # army or corps can use but a battalion can
+        keep = next((u for u in fleet.squadrons
+                     if state.squadrons[u].cls.kind == "battle"), None)
+        if keep is None:
+            keep = fleet.squadrons[0]
+            state.squadrons[keep].cls = oob.IMPERIAL_BATTLE[0][0]
+        for uid in list(fleet.squadrons):
+            if uid != keep:
+                state.squadrons[uid].fleet = None
+                fleet.squadrons.remove(uid)
+        lift = state.squadrons[keep].capacity
+        self.assertLess(lift, 500, "test needs a squadron that cannot lift an army")
+
+        for troop in list(state.troops_at(hex_id, IMPERIAL)):
+            state.troops.pop(troop.uid, None)
+        big = _place_troop(state, oob.TroopClass("army", 500, 15), "imperial", hex_id)
+        small = _place_troop(state, oob.TroopClass("battalion", 1, 15), "imperial", hex_id)
+
+        fleet.plot[state.turn] = ("jump", fleet.location)
+        agent.load_troops(state, IMPERIAL, None)
+        self.assertIsNone(big.aboard,
+                          "a 500-factor army cannot fit in %d factors of lift" % lift)
+        self.assertIsNotNone(small.aboard,
+                             "the small unit must still be loaded behind it")
+
+    def test_the_imperium_can_put_troops_to_sea(self):
+        """An Imperial army that never embarks can never retake anything."""
+        state = new_game(seed=5)
+        imperial = ScriptedAgent(IMPERIAL, seed=1)
+        zhodani = ScriptedAgent(ZHODANI, seed=2)
+        engine = Engine(state, imperial, zhodani)
+        imperial.begin_game(state, IMPERIAL, engine)
+        zhodani.begin_game(state, ZHODANI, engine)
+        engine.initial_plotting()
+        afloat = 0
+        for _ in range(20):
+            if state.game_over:
+                break
+            engine.play_turn()
+            afloat = max(afloat, sum(t.current for t in state.troops.values()
+                                     if t.side == IMPERIAL and t.aboard is not None
+                                     and t.losses < 100))
+        self.assertGreater(afloat, 0,
+                           "the Imperium never embarked a single troop factor")

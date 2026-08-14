@@ -21,7 +21,7 @@ ffw/                      the game
   training.py             cross-entropy doctrine search and self-play regression
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural, human
-tests/test_ffw.py         52 tests, including the rulebook's worked examples
+tests/test_ffw.py         59 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -29,7 +29,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 52 tests, about 45 seconds
+python -m unittest discover tests          # 59 tests, about 50 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -179,12 +179,18 @@ seat and scored the other seat's games *backwards*, at a held-out correlation of
 `tools/train_reference_agents.py` regenerates the trained agents committed under
 `ffw/data/`; `tools/train_one_side.py imperial` does just one side.
 
-`tournament` carries the same health warning. At one game per pairing each
-entry's average rests on a handful of games, and a single game of Fifth
-Frontier War swings by tens of victory points on the dice alone. That reliably
-separates `random` from the rest — it loses by 60-plus VP a game — but it will
-not rank the four real agents against each other, and their order changes from
-run to run. Raise `games` for a ranking you can defend.
+`tournament` plays **paired games**: each matchup runs twice on one seed with
+the seats swapped, and the number reported is the difference between the two
+halves. That matters because the seats are not equal — see the balance section
+below — so raw margins rank the seat, not the player. Measured on this engine,
+pairing cuts the standard deviation of a comparison from about 36 VP to 22;
+it costs two games instead of one, so for fixed compute it buys roughly 15%
+tighter error bars, and more importantly it makes the number mean "a outplayed
+b" rather than "a drew the better side".
+
+Each summary entry carries a `stderr`. A gap smaller than about two of them is
+not a real difference: at one game per pairing that reliably separates `random`
+from the rest, and does not resolve the doctrine agents against each other.
 
 ## Writing your own agent
 
@@ -198,6 +204,57 @@ class CautiousImperial(HeuristicAgent):
     def wants_to_disengage(self, state, side, hex_id, engine):
         return True                      # never fight a fleet action
 ```
+
+## Is the game balanced?
+
+Not evenly, and the code now measures it rather than guessing. `seat_bias` runs
+the *same* doctrine on both sides, so whatever it reports is a property of the
+game as implemented and not of the players:
+
+```python
+from ffw.training import seat_bias
+seat_bias(games=8, max_turns=30)
+# {'mean_margin': +151.8, 'stderr': 6.3, ...}   Zhodani favoured
+```
+
+Averaged over three campaigns, the victory points break down like this:
+
+| | worlds taken | VP |
+|---|---|---|
+| Zhodani take Imperial worlds | 11.0 | 115.3 |
+| Zhodani take neutral worlds | 11.0 | 38.2 |
+| Imperium takes Zhodani worlds | 1.7 | 13.7 |
+| Imperium takes neutral worlds | 2.0 | 6.3 |
+
+Investigating that gap found two real bugs, both fixed and both now covered by
+regression tests in `TestAmphibiousCapability`:
+
+- **The Imperium could never embark a single troop factor.** Spare troops are
+  offered to a fleet biggest-first, and the loader stopped at the head of the
+  list instead of taking the largest unit that *fits*. A 500-factor army parked
+  in front of a battle squadron's 20 factors of lift blocked every smaller unit
+  behind it. Across a whole 40-turn war the Imperium put zero troops to sea.
+- **The garrison rule was applied to worlds that do not need garrisoning.**
+  Rule 5 binds on a world a player has *taken* — "control reverts to its
+  original owner" — and a world cannot revert to the side that already holds
+  it. Charging the owner 1% of its defence battalions locked 2296 factors of
+  the Imperial army onto its own homeland; the Imperial troops had been
+  deployed onto exactly the high-population worlds where that reservation bit
+  hardest.
+
+What is left after those fixes is largely the design. Imperial sealift is 814
+troop factors against the Zhodani's 5009 — a six-to-one ratio that comes
+straight from the order of battle, since the Consulate deploys six assault
+carriers to the Imperium's one. The Zhodani are launching a surprise invasion
+and are equipped for it. The armistice rule reads as the counterweight: from
+turn 26 the Zhodani may end the war unilaterally at a cost of two victory
+levels, which turns a typical +150 into a stalemate.
+
+One clear gap remains, and it is doctrine rather than rules: **11 of the 18
+undefended neutral worlds are never claimed by anybody**, 55 VP left on the
+table, and the Imperium takes only 2 of the 27 neutrals. Those worlds need a
+single troop factor to hold. That is the most promising target for training,
+and it is not something a fixed doctrine is likely to find by hand.
 
 ## Known limits
 

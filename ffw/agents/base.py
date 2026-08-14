@@ -180,20 +180,28 @@ class Agent:
             spare = self._spare_troops(state, side, hex_id, world)
             if not spare:
                 continue
+            # Load the largest unit that will *fit*, not merely the largest.
+            # ``spare`` is ordered biggest-first, and a 500-factor army does not
+            # fit in a battle squadron's 20 factors of lift.  Stopping at the
+            # head of the list therefore loaded nothing at all unless an assault
+            # carrier happened to be present, which silently denied the Imperium
+            # -- whose troops are mostly armies and corps -- any amphibious
+            # capability whatsoever.
             for uid in fleet.squadrons:
                 sq = state.squadrons.get(uid)
                 if sq is None or sq.cls.kind in ("scout", "tanker"):
                     continue
                 free = sq.capacity - sum(state.troops[t].current
                                          for t in sq.troops if t in state.troops)
-                while spare and free > 0:
-                    troop = spare[0]
-                    if troop.current > free or troop.current <= 0:
+                while free > 0:
+                    fits = next((t for t in spare
+                                 if 0 < t.current <= free), None)
+                    if fits is None:
                         break
-                    spare.pop(0)
-                    troop.aboard = sq.uid
-                    sq.troops.append(troop.uid)
-                    free -= troop.current
+                    spare.remove(fits)
+                    fits.aboard = sq.uid
+                    sq.troops.append(fits.uid)
+                    free -= fits.current
 
     def _spare_troops(self, state, side, hex_id, world):
         """Troops that may leave a world without losing control of it."""
@@ -202,7 +210,7 @@ class Agent:
         here.sort(key=lambda t: -t.current)
         if world is None or world.control != side:
             return here
-        need = world.garrison_required()
+        need = world.garrison_required(side)
         keep = []
         total = 0
         for troop in reversed(here):
@@ -229,7 +237,7 @@ class Agent:
         contested = (world.control != side
                      or state.troops_at(hex_id, enemy)
                      or state.garrison_strength(hex_id, side)
-                     < world.garrison_required())
+                     < world.garrison_required(side))
         if not contested:
             return
         for sq in state.squadrons_at(hex_id, side):

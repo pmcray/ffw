@@ -77,8 +77,25 @@ class World:
     def starport_capacity(self) -> int:
         return STARPORT_CAPACITY.get(self.starport, 0)
 
-    def garrison_required(self) -> int:
-        """Troop factors needed to hold the world (rule 5, Control)."""
+    @property
+    def original_control(self) -> str | None:
+        """Which player held this world at the start of the game."""
+        return {"imperial": IMPERIAL, "zhodani": ZHODANI,
+                "sword_worlds": ZHODANI, "vargr": ZHODANI}.get(self.owner)
+
+    def garrison_required(self, side: str | None = None) -> int:
+        """Troop factors needed to hold the world (rule 5, Control).
+
+        The rule reads "to maintain control, the world must be garrisoned ...
+        if the garrison is under strength, control of the world reverts to its
+        original owner", so it binds on a world a player has *taken*.  A world
+        cannot revert to the side that already owns it, and its own defence
+        battalions are its garrison, so passing ``side`` returns zero for that
+        side's own territory.  Called without ``side`` it returns the strength a
+        conqueror would need, which is what the map display wants.
+        """
+        if side is not None and self.original_control == side:
+            return 0
         if self.defense_battalions == 0:
             return 1
         return max(1, self.defense_battalions // 100)
@@ -369,8 +386,7 @@ class GameState:
         world = self.world_map.get(hex_id)
         if world is None:
             return
-        original = {"imperial": IMPERIAL, "zhodani": ZHODANI,
-                    "sword_worlds": ZHODANI, "vargr": ZHODANI}.get(world.owner)
+        original = world.original_control
         for side in (IMPERIAL, ZHODANI):
             if world.control == side:
                 continue
@@ -383,7 +399,7 @@ class GameState:
                 continue
             if world.control == enemy and world.defense_current > 0:
                 continue
-            if self.garrison_strength(hex_id, side) >= world.garrison_required():
+            if self.garrison_strength(hex_id, side) >= world.garrison_required(side):
                 world.control = side
             elif (world.atmosphere == "vacuum" and world.defense_current == 0
                   and any(s.attack > 0 for s in self.squadrons_at(hex_id, side))):
@@ -392,7 +408,7 @@ class GameState:
                 world.control = side
         # a world whose garrison lapses reverts to its original owner
         if world.control is not None and world.control != original:
-            if self.garrison_strength(hex_id, world.control) < world.garrison_required():
+            if self.garrison_strength(hex_id, world.control) < world.garrison_required(world.control):
                 if not self._surrendered_garrison(world):
                     world.control = original
 

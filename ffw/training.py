@@ -69,6 +69,31 @@ def score_for(side: str, margin: float) -> float:
     return margin if side == ZHODANI else -margin
 
 
+def play_paired(agent_a, agent_b, seed: int = 0, max_turns: int = 45):
+    """Play a matchup twice on the same seed with the seats swapped.
+
+    ``agent_a`` and ``agent_b`` are factories ``f(side, seed) -> Agent``.
+
+    Fifth Frontier War is strongly asymmetric -- the Zhodani win most games --
+    and a single game swings by tens of victory points on the setup alone.
+    Comparing two agents by their raw margins therefore measures the seat and
+    the dice at least as much as the play.  A paired game removes both: the two
+    halves share a seed, so they share the deployment, the reinforcement rolls
+    and most of the early combat, and the *difference* between the halves is
+    what the agents did differently.
+
+    Returns ``(advantage, first_margin, second_margin)`` where ``advantage`` is
+    positive when ``agent_a`` outplayed ``agent_b`` across the two seats.
+    """
+    first, _, _ = play_match(agent_a(IMPERIAL, seed), agent_b(ZHODANI, seed + 1),
+                             seed=seed, max_turns=max_turns)
+    second, _, _ = play_match(agent_b(IMPERIAL, seed), agent_a(ZHODANI, seed + 1),
+                              seed=seed, max_turns=max_turns)
+    # a ran the Imperium in the first half and the Consulate in the second, so
+    # a's advantage is (-first + second) / 2
+    return (second - first) / 2.0, first, second
+
+
 # --------------------------------------------------------------------------
 @dataclass
 class TrainingLog:
@@ -316,50 +341,93 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
 
 # --------------------------------------------------------------------------
 def tournament(entries: dict, games: int = 3, max_turns: int = 45,
-               seed: int = 0, progress=None):
-    """Round-robin: every agent plays every other on both sides.
+               seed: int = 0, progress=None, paired: bool = True):
+    """Round-robin over paired games, with standard errors.
 
     ``entries`` maps a label to a factory ``f(side, seed) -> Agent``.
-    Returns a table of results keyed by ``(imperial_label, zhodani_label)`` and
-    a summary of each entry's average margin from its own point of view.
+
+    Each pairing is played as mirrored games on a shared seed (see
+    ``play_paired``), so the number reported for ``a`` against ``b`` is how much
+    better ``a`` played than ``b`` *across both seats* -- not how much either
+    won by, which in this game is dominated by which seat they drew.  The
+    Zhodani win most games from any competent doctrine, so raw margins rank the
+    seats rather than the agents.
+
+    Returns ``(table, summary)``.  ``table[(a, b)]`` is a's advantage over b in
+    victory points, antisymmetric so ``table[(b, a)] == -table[(a, b)]``.  Each
+    summary entry carries ``average`` and ``stderr``; a difference smaller than
+    a couple of standard errors is not a real difference.
+
+    Set ``paired=False`` for the old behaviour: raw margins by seat ordering.
     """
     names = list(entries)
-    table = {}
-    summary = {n: {"games": 0, "score": 0.0, "wins": 0, "losses": 0,
-                   "draws": 0} for n in names}
-    for a in names:
-        for b in names:
-            if a == b:
-                continue
-            margins = []
+    table: dict = {}
+    samples: dict = {n: [] for n in names}
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            advantages = []
             for g in range(games):
-                match_seed = seed * 131 + hash((a, b)) % 1000 + g
-                imperial = entries[a](IMPERIAL, match_seed)
-                zhodani = entries[b](ZHODANI, match_seed + 1)
-                margin, result, _ = play_match(imperial, zhodani,
-                                               seed=match_seed,
-                                               max_turns=max_turns)
-                margins.append(margin)
-                summary[a]["games"] += 1
-                summary[b]["games"] += 1
-                summary[a]["score"] += -margin
-                summary[b]["score"] += margin
-                if margin > 50:
-                    summary[b]["wins"] += 1
-                    summary[a]["losses"] += 1
-                elif margin < -50:
-                    summary[a]["wins"] += 1
-                    summary[b]["losses"] += 1
+                match_seed = seed * 131 + (abs(hash((a, b))) % 1000) + g
+                if paired:
+                    advantage, first, second = play_paired(
+                        entries[a], entries[b], seed=match_seed,
+                        max_turns=max_turns)
+                    if progress is not None:
+                        progress(a, b, g, advantage, (first, second))
                 else:
-                    summary[a]["draws"] += 1
-                    summary[b]["draws"] += 1
-                if progress is not None:
-                    progress(a, b, g, margin, result)
-            table[(a, b)] = sum(margins) / len(margins)
+                    margin, result, _ = play_match(
+                        entries[a](IMPERIAL, match_seed),
+                        entries[b](ZHODANI, match_seed + 1),
+                        seed=match_seed, max_turns=max_turns)
+                    advantage = -margin
+                    if progress is not None:
+                        progress(a, b, g, advantage, result)
+                advantages.append(advantage)
+            mean = sum(advantages) / len(advantages)
+            table[(a, b)] = mean
+            table[(b, a)] = -mean
+            samples[a].extend(advantages)
+            samples[b].extend(-x for x in advantages)
+
+    summary = {}
     for name in names:
-        played = max(1, summary[name]["games"])
-        summary[name]["average"] = summary[name]["score"] / played
+        values = samples[name]
+        mean = sum(values) / len(values) if values else 0.0
+        if len(values) > 1:
+            variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+            stderr = math.sqrt(variance / len(values))
+        else:
+            stderr = 0.0
+        summary[name] = {"average": mean, "stderr": stderr,
+                         "pairings": len(values),
+                         "wins": sum(1 for v in values if v > 0),
+                         "losses": sum(1 for v in values if v < 0)}
     return table, summary
+
+
+def seat_bias(agent=None, games: int = 6, max_turns: int = 45, seed: int = 0):
+    """How much the Zhodani seat is worth, holding the doctrine constant.
+
+    Plays an agent against itself and averages the margin.  Any result far from
+    zero is a property of the game as implemented, not of the players, and is
+    the baseline every other comparison has to be read against.
+    """
+    factory = agent or (lambda side, s: ScriptedAgent(side, seed=s))
+    margins = []
+    for g in range(games):
+        match_seed = seed * 977 + g
+        margin, _, _ = play_match(factory(IMPERIAL, match_seed),
+                                  factory(ZHODANI, match_seed + 1),
+                                  seed=match_seed, max_turns=max_turns)
+        margins.append(margin)
+    mean = sum(margins) / len(margins)
+    if len(margins) > 1:
+        variance = sum((m - mean) ** 2 for m in margins) / (len(margins) - 1)
+        stderr = math.sqrt(variance / len(margins))
+    else:
+        stderr = 0.0
+    return {"mean_margin": mean, "stderr": stderr, "margins": margins,
+            "games": len(margins)}
 
 
 # --------------------------------------------------------------------------
