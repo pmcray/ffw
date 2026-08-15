@@ -6,6 +6,7 @@ Run with ``python -m pytest tests`` or ``python tests/test_ffw.py``.
 from __future__ import annotations
 
 import copy
+import json
 import os
 import random
 import sys
@@ -936,3 +937,324 @@ class TestEvaluatorTargets(unittest.TestCase):
         report = evaluator_report(Echo(), games=3, seed=6, max_turns=14)
         self.assertEqual(report["target"], "delta")
         self.assertLess(abs(report["skill_over_baseline"]), 0.05)
+
+
+class TestDoctrineRules(unittest.TestCase):
+    """The rule vocabulary: what a proposal is allowed to say."""
+
+    def test_every_condition_form_parses(self):
+        from ffw.agents.doctrine import Condition
+        for text in ("undefended", "!undefended", "control=enemy",
+                     "owner=neutral", "tech>=9", "distance<=2", "margin>=-40",
+                     "carrying"):
+            self.assertTrue(Condition(text).text)
+
+    def test_unknown_terms_are_rejected_with_the_vocabulary(self):
+        from ffw.agents.doctrine import Condition, RuleError
+        for bad in ("moon_phase>=3", "control=purple", "tech=high", "??"):
+            with self.assertRaises(RuleError) as caught:
+                Condition(bad)
+            self.assertTrue(str(caught.exception))
+
+    def test_a_rule_needs_exactly_one_effect(self):
+        from ffw.agents.doctrine import Rule, RuleError
+        Rule("ok", ["undefended"], {"prefer": 1.0})
+        with self.assertRaises(RuleError):
+            Rule("two", ["undefended"], {"prefer": 1.0, "avoid": 1.0})
+        with self.assertRaises(RuleError):
+            Rule("none", ["undefended"], {})
+        with self.assertRaises(RuleError):
+            Rule("unconditional", [], {"prefer": 1.0})
+
+    def test_negation_inverts_a_flag(self):
+        from ffw.agents.doctrine import Condition
+        facts = {"vacuum": True}
+        self.assertTrue(Condition("vacuum").holds(facts))
+        self.assertFalse(Condition("!vacuum").holds(facts))
+
+    def test_a_veto_disqualifies_regardless_of_other_rules(self):
+        from ffw.agents.doctrine import RuleSet
+        rules = RuleSet.from_dict({"rules": [
+            {"name": "tempting", "when": ["undefended"], "then": {"prefer": 9.0}},
+            {"name": "forbidden", "when": ["red_zone"], "then": {"veto": True}},
+        ]})
+        score, _ = rules.score({"undefended": True, "red_zone": True})
+        self.assertIsNone(score)
+
+    def test_rules_round_trip_through_json(self):
+        from ffw.agents.doctrine import RuleSet, default_rules
+        original = default_rules()
+        restored = RuleSet.from_dict(json.loads(json.dumps(original.to_dict())))
+        self.assertEqual(original.to_dict(), restored.to_dict())
+
+    def test_edits_add_remove_and_replace(self):
+        from ffw.agents.doctrine import RuleError, default_rules
+        base = default_rules()
+        added = base.apply([{"action": "add", "rule": {
+            "name": "new idea", "when": ["capital"], "then": {"prefer": 1.0}}}])
+        self.assertEqual(len(added), len(base) + 1)
+        removed = added.apply([{"action": "remove", "name": "new idea"}])
+        self.assertEqual(len(removed), len(base))
+        with self.assertRaises(RuleError):
+            base.apply([{"action": "remove", "name": "no such rule"}])
+        with self.assertRaises(RuleError):
+            base.apply([{"action": "add", "rule": {
+                "name": "long jumps cost time", "when": ["capital"],
+                "then": {"prefer": 1.0}}}])
+
+    def test_editing_does_not_mutate_the_original(self):
+        from ffw.agents.doctrine import default_rules
+        base = default_rules()
+        before = base.to_dict()
+        base.apply([{"action": "posture", "posture": {"pickets": False}}])
+        self.assertEqual(base.to_dict(), before)
+
+    def test_the_published_vocabulary_matches_the_parser(self):
+        """The prompt is generated from the parser, so it cannot drift from it."""
+        from ffw.agents.doctrine import ENUMS, FLAGS, NUMBERS, POSTURE_KEYS
+        from ffw.llm import vocabulary
+        published = vocabulary()
+        for term in tuple(FLAGS) + tuple(NUMBERS) + tuple(ENUMS) + tuple(POSTURE_KEYS):
+            self.assertIn(term, published, "%s is missing from the prompt" % term)
+
+
+class TestDoctrineAgent(unittest.TestCase):
+    """A different architecture, not a fourth tuning of the same one."""
+
+    def setUp(self):
+        from ffw.agents import DoctrineAgent
+        self.state = new_game(seed=5)
+        self.agent = DoctrineAgent(IMPERIAL, seed=1)
+
+    def test_an_empty_rule_set_scores_every_destination_alike(self):
+        """Nothing of the linear doctrine survives the override.
+
+        HeuristicAgent scoring the same hexes gives a spread of values; the
+        doctrine agent with no rules must give one constant, or some term of
+        the weighted sum is leaking through.
+        """
+        from ffw.agents import DoctrineAgent, HeuristicAgent, RuleSet
+        hexes = list(self.state.world_map.worlds)[::19]
+        blank = DoctrineAgent(IMPERIAL, RuleSet(), seed=1)
+        scores = {blank.score_destination(self.state, IMPERIAL, "1910", h, 0)
+                  for h in hexes}
+        self.assertEqual(len(scores), 1, "a weighted-sum term is still firing")
+        linear = HeuristicAgent(IMPERIAL, seed=1)
+        spread = {round(linear.score_destination(self.state, IMPERIAL, "1910", h, 0), 6)
+                  for h in hexes}
+        self.assertGreater(len(spread), 1)
+
+    def test_a_conjunction_no_weight_vector_can_express(self):
+        """The same world, scored differently by *combinations* of facts.
+
+        A linear doctrine has one coefficient per feature: whatever it pays for
+        `undefended` it pays at every distance, carrying or empty.  A rule can
+        say "undefended AND carrying AND close", and nothing else can.
+        """
+        from ffw.agents import DoctrineAgent, RuleSet
+        rules = RuleSet.from_dict({"rules": [{
+            "name": "close free world with troops aboard",
+            "when": ["claimable", "carrying>=1", "distance<=2"],
+            "then": {"prefer": 5.0}}]})
+        agent = DoctrineAgent(IMPERIAL, rules, seed=1)
+        free = next(w for w in self.state.world_map
+                    if w.owner == "neutral" and not w.defense_battalions
+                    and not w.sdb and w.atmosphere != "vacuum")
+        near = min((h for h in self.state.world_map.worlds
+                    if 0 < hexmap.distance(h, free.hex) <= 2),
+                   key=lambda h: hexmap.distance(h, free.hex))
+        far = max(self.state.world_map.worlds,
+                  key=lambda h: hexmap.distance(h, free.hex))
+        loaded = agent.score_destination(self.state, IMPERIAL, near, free.hex, 50)
+        empty = agent.score_destination(self.state, IMPERIAL, near, free.hex, 0)
+        distant = agent.score_destination(self.state, IMPERIAL, far, free.hex, 50)
+        self.assertGreater(loaded, empty)
+        self.assertGreater(loaded, distant)
+        self.assertEqual(empty, distant)   # both fail, for different reasons
+
+    def test_it_plays_a_complete_legal_game(self):
+        from ffw.agents import DoctrineAgent
+        state = new_game(seed=11)
+        result = play(state, DoctrineAgent(IMPERIAL, seed=1),
+                      DoctrineAgent(ZHODANI, seed=2), max_turns=18)
+        from ffw.training import VICTORY_ORDER
+        self.assertIn(result, VICTORY_ORDER)
+
+    def test_posture_switches_a_behaviour_off(self):
+        from ffw.agents import DoctrineAgent, RuleSet, default_rules
+        on = DoctrineAgent(IMPERIAL, default_rules(), seed=1)
+        off_rules = default_rules().apply(
+            [{"action": "posture", "posture": {"pickets": False}}])
+        off = DoctrineAgent(IMPERIAL, off_rules, seed=1)
+        self.assertTrue(on.pickets)
+        self.assertFalse(off.pickets)
+
+    def test_coverage_reports_rules_that_never_fire(self):
+        from ffw.agents import DoctrineAgent, RuleSet
+        rules = RuleSet.from_dict({"rules": [
+            {"name": "fires", "when": ["turn>=1"], "then": {"prefer": 1.0}},
+            {"name": "never fires", "when": ["turn<=-5"], "then": {"prefer": 1.0}},
+        ]})
+        agent = DoctrineAgent(IMPERIAL, rules, seed=1)
+        for h in list(self.state.world_map.worlds)[:5]:
+            agent.score_destination(self.state, IMPERIAL, "1910", h, 0)
+        coverage = agent.coverage()
+        self.assertGreater(coverage["fires"], 0)
+        self.assertEqual(coverage["never fires"], 0)
+
+    def test_explain_names_the_rules_behind_a_choice(self):
+        free = next(w for w in self.state.world_map
+                    if w.owner == "neutral" and not w.defense_battalions
+                    and not w.sdb)
+        reasons = self.agent.explain_choice(self.state, IMPERIAL, "1910",
+                                            free.hex, carrying=50)
+        self.assertTrue(reasons)
+        for name, effect, delta in reasons:
+            self.assertIn(effect, ("prefer", "avoid"))
+
+
+class TestProposalLoop(unittest.TestCase):
+    """The loop that turns a written proposal into a measured verdict."""
+
+    def test_the_wire_format_converts_to_edits(self):
+        from ffw.llm import parse_effect, parse_posture, to_edits
+        self.assertEqual(parse_effect("prefer 2.5"), {"prefer": 2.5})
+        self.assertEqual(parse_effect("veto"), {"veto": True})
+        self.assertEqual(parse_posture(["pickets=false"]), {"pickets": False})
+        edits = to_edits([{"action": "add", "name": "x", "when": ["capital"],
+                           "then": "avoid 1", "rationale": "", "set": []}])
+        self.assertEqual(edits[0]["rule"]["then"], {"avoid": 1.0})
+
+    def test_malformed_effects_and_postures_are_refused(self):
+        from ffw.agents.doctrine import RuleError
+        from ffw.llm import parse_effect, parse_posture
+        for bad in ("", "prefer", "encourage 2", "prefer lots"):
+            with self.assertRaises(RuleError):
+                parse_effect(bad)
+        with self.assertRaises(RuleError):
+            parse_posture(["nonsense=1"])
+
+    def test_a_bad_proposal_is_rejected_before_any_game_is_played(self):
+        from ffw.llm import StubProposer, evolve
+        script = [[{"title": "bad", "hypothesis": "", "edits": [
+            {"action": "add", "name": "n", "when": ["moon_phase>=3"],
+             "then": "prefer 1", "rationale": "", "set": []}]}]]
+        rules, log = evolve(generations=1, proposals=1, games=1, max_turns=8,
+                            diagnostic_games=1, confirm_games=0,
+                            proposer=StubProposer(script))
+        self.assertEqual(len(log.rows), 1)
+        self.assertIn("moon_phase", log.rows[0]["error"])
+        self.assertIn("moon_phase", log.history()[0])
+
+    def test_a_measured_result_reaches_the_next_briefing(self):
+        """The loop is closed: what a proposal scored is what it reads next."""
+        from ffw.llm import StubProposer, evolve
+        good = [{"title": "a testable idea", "hypothesis": "more free worlds",
+                 "edits": [{"action": "add", "name": "extra",
+                            "when": ["claimable", "distance<=4"],
+                            "then": "prefer 1.5", "rationale": "", "set": []}]}]
+        stub = StubProposer([good, []])
+        evolve(generations=2, proposals=1, games=1, max_turns=8,
+               diagnostic_games=1, confirm_games=0, proposer=stub)
+        self.assertEqual(len(stub.briefings), 2)
+        self.assertIn("a testable idea", stub.briefings[1])
+        self.assertNotIn("a testable idea", stub.briefings[0])
+
+    def test_the_briefing_carries_the_diagnostics_a_proposal_needs(self):
+        from ffw.agents.doctrine import default_rules
+        from ffw.llm import brief, diagnose
+        rules = default_rules()
+        diagnostics = diagnose(rules, games=1, max_turns=10, seed=3)
+        text = brief(rules, diagnostics,
+                     {"advantage": 0.0, "stderr": 1.0, "verdict": "x"}, [], 3)
+        self.assertIn("undefended neutral worlds", text)
+        self.assertIn("claimed by nobody", text)
+        self.assertIn("never fired", text)
+        self.assertIn("victory points", text.lower())
+
+    def test_a_winner_must_win_again_on_fresh_seeds(self):
+        """Confirmation is what stops the loop keeping a seed-fitted winner."""
+        from ffw.agents.doctrine import default_rules
+        from ffw.llm import Proposal, evolve, StubProposer
+        import ffw.llm as llm
+
+        calls = {"n": 0}
+        real = llm.evaluate
+
+        def flattering_then_honest(ruleset, against, games=10, seed=7000,
+                                   max_turns=40):
+            calls["n"] += 1
+            # 1st: incumbent benchmark, 2nd: the candidate (a big win),
+            # 3rd: confirmation on fresh seeds (it evaporates)
+            if calls["n"] == 2:
+                return {"advantage": 40.0, "stderr": 1.0, "games": games,
+                        "verdict": "better"}
+            if calls["n"] == 3:
+                return {"advantage": -5.0, "stderr": 2.0, "games": games,
+                        "verdict": "worse"}
+            return {"advantage": 0.0, "stderr": 1.0, "games": games,
+                    "verdict": "indistinguishable"}
+
+        script = [[{"title": "lucky seeds", "hypothesis": "", "edits": [
+            {"action": "add", "name": "extra", "when": ["capital"],
+             "then": "prefer 1", "rationale": "", "set": []}]}]]
+        llm.evaluate = flattering_then_honest
+        try:
+            rules, log = evolve(generations=1, proposals=1, games=4, max_turns=8,
+                                diagnostic_games=1, confirm_games=4,
+                                proposer=StubProposer(script))
+        finally:
+            llm.evaluate = real
+        self.assertEqual(len(rules), len(default_rules()),
+                         "a winner that failed confirmation was kept anyway")
+        self.assertFalse(log.rows[0]["accepted"])
+        self.assertIn("fresh seeds", log.history()[0])
+
+    def test_the_api_request_is_built_the_way_the_docs_require(self):
+        """Exercise the request construction without a network."""
+        from ffw.llm import ClaudeProposer, PROPOSAL_SCHEMA
+
+        seen = {}
+
+        class FakeMessages:
+            def create(self, **kw):
+                seen.update(kw)
+                return type("R", (), {
+                    "stop_reason": "end_turn",
+                    "content": [type("B", (), {"type": "text", "text":
+                                               '{"proposals": []}'})()]})()
+
+        class FakeClient:
+            def __init__(self):
+                self.messages = FakeMessages()
+                self.beta = type("Beta", (), {"messages": self.messages})()
+
+        proposer = ClaudeProposer(client=FakeClient())
+        self.assertEqual(proposer.propose("briefing text", 3), [])
+        self.assertEqual(seen["model"], "claude-opus-5")
+        self.assertEqual(
+            seen["output_config"]["format"]["schema"], PROPOSAL_SCHEMA)
+        self.assertEqual(seen["output_config"]["effort"], "high")
+        self.assertEqual(seen["system"][0]["cache_control"], {"type": "ephemeral"})
+        self.assertNotIn("temperature", seen)   # removed on Claude Opus 5
+        self.assertNotIn("top_p", seen)
+        self.assertNotEqual(seen["messages"][-1]["role"], "assistant")  # no prefill
+
+    def test_a_refusal_is_handled_before_the_content_is_read(self):
+        from ffw.llm import ClaudeProposer
+
+        class FakeMessages:
+            def create(self, **kw):
+                return type("R", (), {
+                    "stop_reason": "refusal",
+                    "stop_details": type("D", (), {"category": "cyber"})(),
+                    "content": []})()
+
+        class FakeClient:
+            def __init__(self):
+                self.messages = FakeMessages()
+                self.beta = type("Beta", (), {"messages": self.messages})()
+
+        with self.assertRaises(RuntimeError) as caught:
+            ClaudeProposer(client=FakeClient()).propose("briefing", 1)
+        self.assertIn("cyber", str(caught.exception))

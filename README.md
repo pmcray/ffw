@@ -19,9 +19,11 @@ ffw/                      the game
   engine.py               setup and the four phases of the sequence of play
   features.py             the state encoding the value network sees
   training.py             cross-entropy doctrine search and self-play regression
+  llm.py                  Claude proposes doctrine edits; the engine grades them
   viz.py                  the star chart renderer and campaign recorder
-  agents/                 random, heuristic, scripted, lookahead, neural, human
-tests/test_ffw.py         87 tests, including the rulebook's worked examples
+  agents/                 random, heuristic, scripted, lookahead, neural,
+                          doctrine (written rules), human
+tests/test_ffw.py         110 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -29,7 +31,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 87 tests, about 40 seconds
+python -m unittest discover tests          # 110 tests, about 30 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -126,13 +128,87 @@ Five agents, differing in *how* they decide:
 | `ScriptedAgent` | the same plus a historical opening | ~0.5 s/game |
 | `LookaheadAgent` | rolls the game forward for each shortlisted destination | ~25 s/game |
 | `NeuralAgent` | a self-play value network retunes the doctrine's aggression | ~0.7 s/game |
+| `DoctrineAgent` | a written rule set — conjunctions, not coefficients | ~0.8 s/game |
 
-Four of the five share one weight vector of 19 named parameters, so a doctrine
-trained by one can be handed to another — which also means they are four
-tunings of a single way of thinking.  `LookaheadAgent` is the outlier: it uses
-the doctrine only to *propose* a shortlist and then decides by simulating each
-candidate, so a match against it compares two architectures rather than two
-weight vectors.
+Three of the six share one weight vector of 19 named parameters, so a doctrine
+trained by one can be handed to another — which also means they are three
+tunings of a single way of thinking.  The other three differ in kind:
+`LookaheadAgent` uses the doctrine only to *propose* a shortlist and then
+decides by simulating each candidate, and `DoctrineAgent` throws the weighted
+sum out entirely and decides by matching named rules.
+
+### Doctrine written in words
+
+`DoctrineAgent` is the odd one out in a different direction. Its decisions come
+from an ordered list of **rules** — each a conjunction of named conditions and
+one effect — rather than a weighted sum:
+
+```json
+{"name": "occupy free worlds within reach",
+ "when": ["claimable", "carrying>=1", "distance<=3"],
+ "then": {"prefer": 2.4},
+ "rationale": "Eighteen neutrals have no defences at all and carry 55 VP."}
+```
+
+The reason to have it is not style. **A weight vector cannot express a
+conjunction.** Whatever coefficient the linear doctrine puts on `undefended` it
+pays at every distance, carrying troops or empty — no vector of per-feature
+weights says "undefended *and* within two jumps *and* I have troops aboard".
+That sentence is one obvious instruction to a human commander and it is outside
+the search space of every numeric trainer here. A test pins the difference down:
+under a rule set the same world scores differently depending on the
+*combination* of facts, and identically under any single weight.
+
+Two more tests keep the claim honest. An empty rule set must score every
+destination identically — if any term of the weighted sum were leaking through,
+it wouldn't. And the condition vocabulary published in the prompt is generated
+from the parser, so the two cannot drift apart.
+
+It plays at the level of the doctrine it replaces, which is what makes the
+comparison fair rather than flattering:
+
+| matchup | over 30 paired games |
+|---|---|
+| doctrine vs `ScriptedAgent` | +7.0 ± 4.6 VP (indistinguishable) |
+| doctrine vs `HeuristicAgent` | +0.3 ± 4.4 VP (indistinguishable) |
+
+### The proposal loop: doctrine proposed in words, graded by the engine
+
+A search space of *behaviours* is only useful if something can search it.
+`ffw/llm.py` is that something. Each generation Claude is shown how the current
+doctrine actually performed — where the victory points went, how many of the 18
+undefended neutrals finished claimed by nobody, which rules never fired once in
+a whole war, and what every previous proposal measured — and proposes edits in
+the rule vocabulary. The engine then plays each candidate against the incumbent
+over paired games and reports an advantage with a standard error.
+
+```bash
+export ANTHROPIC_API_KEY=...            # or: ant auth login
+pip install anthropic
+python tools/evolve_doctrine.py --generations 5 --proposals 4 --games 12
+python tools/evolve_doctrine.py --dry-run     # same loop, scripted proposals
+```
+
+The division of labour is the point. The model supplies imagination over a space
+numeric search cannot reach; the engine supplies the one thing a model cannot
+supply about its own ideas, which is whether they are true. **This is the loop
+that would have found the free-world problem without a person noticing it** — it
+is handed the "claimed by nobody" line every single generation.
+
+Three things stop it fooling itself, each one a lesson this project already paid
+for:
+
+- **Unparseable proposals are rejected before a game is played**, and the error
+  goes into the next briefing verbatim — the model is told which term it
+  invented and what the vocabulary actually contains.
+- **A winner must clear `--accept-sigma` standard errors.** At zero the loop
+  accepts whichever candidate the seeds favoured and calls a random walk
+  progress; at two nothing clears the bar at any affordable sample size. One is
+  the compromise, and the verdict prints beside it so a weak acceptance is
+  visible as one.
+- **A winner must then win again on fresh seeds.** Best-of-four on one set of
+  games is partly selected for fitting those games — precisely the trap that
+  made the evaluator comparison read +10.2 at ten games and +1.6 at sixty.
 
 ### The search agent, and what it cost to make it usable
 
