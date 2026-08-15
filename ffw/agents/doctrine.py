@@ -419,7 +419,7 @@ class DoctrineAgent(HeuristicAgent):
             self.ruleset = RuleSet.load(rules)
         else:
             self.ruleset = RuleSet.from_dict(rules)
-        self.pickets = bool(self.ruleset.posture["pickets"])
+        self._pickets = bool(self.ruleset.posture["pickets"])
         #: rule -> how often it decided something, for the proposal briefing
         self.fired: dict[str, int] = {}
         self.explain = explain

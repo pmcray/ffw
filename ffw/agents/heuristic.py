@@ -69,14 +69,15 @@ class HeuristicAgent(Agent):
     name = "heuristic"
 
     def __init__(self, side: str, weights=None, seed: int | None = None,
-                 label: str | None = None, pickets: bool = True):
+                 label: str | None = None, pickets: bool | None = None):
         super().__init__(side, seed)
         #: detach single squadrons to occupy undefended neutrals.  Kept as a
         #: switch so the behaviour can be measured against its own absence.
         #: It controls the *detachment* only -- the pull free worlds exert on
         #: ordinary fleets is the ``free_world`` weight, so the two halves can
         #: be turned off independently and measured apart.
-        self.pickets = pickets
+        #: ``None`` means "decide by side": see the ``pickets`` property.
+        self._pickets = pickets
         if weights is None:
             self.w = dict(DEFAULT_WEIGHTS)
         elif isinstance(weights, dict):
@@ -90,6 +91,27 @@ class HeuristicAgent(Agent):
         self._front_cache = None
         self._intent_turn = -1
         self._picket_orders: dict[int, str] = {}
+
+    @property
+    def pickets(self) -> bool:
+        """Whether to detach pickets -- side-aware unless set explicitly.
+
+        Measured over 240 paired games per side, pooled from two independent
+        blocks: pickets are worth +5.0 +/- 2.4 VP to the Imperium and
+        -6.4 +/- 2.8 VP to the Zhodani.  The asymmetry has a plain reading.  The
+        Imperium has nothing better for a spare escort to do; the Zhodani are
+        already collecting eight of the free worlds in the course of an advance
+        their six-to-one sealift advantage is built around, so a detached
+        squadron costs the main effort more than the marginal world returns.
+
+        This is the only behaviour in the project measured well enough to
+        deserve a side-specific default, and it only became visible at a sample
+        size the engine could not previously afford: at twelve paired games the
+        Zhodani effect read +2.8 +/- 12.0.
+        """
+        if self._pickets is not None:
+            return self._pickets
+        return self.side == IMPERIAL
 
     # ------------------------------------------------------------------
     def begin_game(self, state, side, engine):

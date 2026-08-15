@@ -39,10 +39,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ffw.agents import (LookaheadAgent, NeuralAgent,                  # noqa: E402
-                        ScriptedAgent)
-from ffw.state import IMPERIAL, ZHODANI                               # noqa: E402
-from ffw.training import (evaluator_report, play_paired, save_agent,  # noqa: E402
+from ffw.state import ZHODANI                                         # noqa: E402
+from ffw.training import (AgentSpec, evaluate_paired,               # noqa: E402
+                          evaluator_report, save_agent,
                           train_value_network)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,17 +53,8 @@ def elapsed(start):
 
 
 def paired(a, b, games, max_turns, seed):
-    advantages = []
-    for g in range(games):
-        advantage, _, _ = play_paired(a, b, seed=seed + g, max_turns=max_turns)
-        advantages.append(advantage)
-    mean = sum(advantages) / len(advantages)
-    var = sum((x - mean) ** 2 for x in advantages) / max(1, len(advantages) - 1)
-    stderr = (var / len(advantages)) ** 0.5
-    verdict = ("better" if mean > 2 * stderr else
-               "worse" if mean < -2 * stderr else "indistinguishable")
-    return {"advantage": mean, "stderr": stderr, "games": games,
-            "verdict": verdict}
+    result = evaluate_paired(a, b, games=games, seed=seed, max_turns=max_turns)
+    return {k: v for k, v in result.items() if k != "advantages"}
 
 
 def main(games=50, max_turns=30, match_games=60, match_turns=40,
@@ -100,8 +90,8 @@ def main(games=50, max_turns=30, match_games=60, match_turns=40,
     results = {}
     final_net, delta_net = nets["final"][0], nets["delta"][0]
     results["neural"] = paired(
-        lambda s, d: NeuralAgent(s, network=delta_net, seed=d),
-        lambda s, d: NeuralAgent(s, network=final_net, seed=d),
+        AgentSpec(kind="neural", network=delta_net.to_dict()),
+        AgentSpec(kind="neural", network=final_net.to_dict()),
         match_games, match_turns, seed=5100)
     print("   neural(delta) vs neural(final)  %+7.1f +/- %5.1f -> %s   %s"
           % (results["neural"]["advantage"], results["neural"]["stderr"],
@@ -110,16 +100,16 @@ def main(games=50, max_turns=30, match_games=60, match_turns=40,
     for name, net in (("delta", delta_net), ("final", final_net)):
         key = "lookahead_%s" % name
         results[key] = paired(
-            lambda s, d: LookaheadAgent(s, seed=d, evaluator=net),
-            lambda s, d: ScriptedAgent(s, seed=d),
+            AgentSpec(kind="lookahead",
+                      options={"evaluator": net.to_dict()}),
+            AgentSpec(kind="scripted"),
             lookahead_games, match_turns, seed=5200)
         print("   lookahead(%s leaf) vs scripted  %+7.1f +/- %5.1f -> %s   %s"
               % (name, results[key]["advantage"], results[key]["stderr"],
                  results[key]["verdict"], elapsed(start)), flush=True)
 
     results["raw_lookahead"] = paired(
-        lambda s, d: LookaheadAgent(s, seed=d),
-        lambda s, d: ScriptedAgent(s, seed=d),
+        AgentSpec(kind="lookahead"), AgentSpec(kind="scripted"),
         lookahead_games, match_turns, seed=5200)
     print("   lookahead(raw margin leaf) vs scripted  %+7.1f +/- %5.1f -> %s"
           "   %s" % (results["raw_lookahead"]["advantage"],

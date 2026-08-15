@@ -30,10 +30,15 @@ not an oracle, and raise the game count a long way before trusting it further.
 
 from __future__ import annotations
 
+import atexit
+import concurrent.futures as futures
 import json
 import math
+import multiprocessing
 import os
+import pickle
 import time
+import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -92,6 +97,187 @@ def play_paired(agent_a, agent_b, seed: int = 0, max_turns: int = 45):
     # a ran the Imperium in the first half and the Consulate in the second, so
     # a's advantage is (-first + second) / 2
     return (second - first) / 2.0, first, second
+
+
+# --------------------------------------------------------------------------
+# Running the games in parallel
+#
+# A paired game costs about 1.6 seconds, and the standard error of a comparison
+# falls as 1/sqrt(games): twenty paired games leaves +/- 4.7 VP, which is wider
+# than most of the effects worth measuring here, and every "indistinguishable"
+# verdict in this project came from sample sizes chosen when the engine was nine
+# times slower.  Games differ only in their seed and share no state, so they
+# parallelise perfectly -- the only obstacle is that a lambda cannot be pickled
+# and every agent factory in the codebase was one.  ``AgentSpec`` is a factory
+# made of plain data instead.
+# --------------------------------------------------------------------------
+@dataclass
+class AgentSpec:
+    """A picklable description of an agent, usable anywhere a factory is.
+
+    Call it like the lambdas it replaces -- ``spec(side, seed)`` -- but because
+    it is data rather than a closure it survives the trip to a worker process.
+    """
+
+    kind: str = "scripted"
+    weights: dict | None = None
+    rules: dict | None = None
+    network: dict | None = None
+    label: str | None = None
+    options: dict = field(default_factory=dict)
+
+    def __call__(self, side: str, seed: int):
+        from .agents import (DoctrineAgent, HeuristicAgent, LookaheadAgent,
+                             NeuralAgent, RandomAgent, ScriptedAgent,
+                             ValueNetwork)
+        kw = dict(self.options)
+        if self.label:
+            kw["label"] = self.label
+        if self.kind == "random":
+            return RandomAgent(side, seed=seed)
+        if self.kind == "doctrine":
+            return DoctrineAgent(side, self.rules, seed=seed, **kw)
+        if self.kind == "neural":
+            net = ValueNetwork.from_dict(self.network) if self.network else None
+            return NeuralAgent(side, network=net, weights=self.weights,
+                               seed=seed, **kw)
+        if self.kind == "lookahead":
+            # the leaf evaluator travels as a dict and is rebuilt here, so a
+            # search agent with a value network is still picklable
+            leaf = kw.get("evaluator")
+            if isinstance(leaf, dict):
+                kw["evaluator"] = ValueNetwork.from_dict(leaf)
+            return LookaheadAgent(side, self.weights, seed=seed, **kw)
+        if self.kind == "heuristic":
+            return HeuristicAgent(side, self.weights, seed=seed, **kw)
+        if self.kind == "scripted":
+            return ScriptedAgent(side, self.weights, seed=seed, **kw)
+        raise ValueError("unknown agent kind %r" % (self.kind,))
+
+    def named(self, label: str) -> "AgentSpec":
+        return AgentSpec(self.kind, self.weights, self.rules, self.network,
+                         label, dict(self.options))
+
+
+def default_workers(games: int = 2) -> int:
+    """How many processes to spread a batch of games over.
+
+    Honours ``FFW_WORKERS`` so a run can be pinned to one core when something
+    else needs the machine, and refuses to fan out from inside a worker -- a
+    pool spawned by a pool is an error, not a speedup.
+    """
+    override = os.environ.get("FFW_WORKERS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    if multiprocessing.current_process().daemon:
+        return 1
+    return max(1, min(os.cpu_count() or 1, 8, games))
+
+
+def _picklable(value) -> bool:
+    try:
+        pickle.dumps(value)
+        return True
+    except Exception:
+        return False
+
+
+_POOL = {"workers": 0, "executor": None}
+
+
+def _pool(workers: int):
+    """One process pool, reused.
+
+    Starting an executor costs about a third of a second, and an evolution run
+    evaluates dozens of candidates -- paying that per call turned a speedup into
+    a tax.  The pool is kept until the interpreter exits or a different width is
+    asked for.
+    """
+    if _POOL["executor"] is not None and _POOL["workers"] == workers:
+        return _POOL["executor"]
+    shutdown_pool()
+    _POOL["executor"] = futures.ProcessPoolExecutor(max_workers=workers)
+    _POOL["workers"] = workers
+    return _POOL["executor"]
+
+
+def shutdown_pool() -> None:
+    if _POOL["executor"] is not None:
+        _POOL["executor"].shutdown(wait=True)
+    _POOL["executor"], _POOL["workers"] = None, 0
+
+
+atexit.register(shutdown_pool)
+
+
+def _run_paired(job):
+    agent_a, agent_b, seed, max_turns = job
+    return play_paired(agent_a, agent_b, seed=seed, max_turns=max_turns)
+
+
+def paired_series(agent_a, agent_b, games: int = 20, seed: int = 0,
+                  max_turns: int = 45, workers: int | None = None,
+                  progress=None) -> list:
+    """Play ``games`` paired matchups and return the advantages, in seed order.
+
+    Spread across processes when the factories are picklable (build them with
+    ``AgentSpec``); falls back to running in this process otherwise, because a
+    lambda that cannot cross a process boundary is a reason to be slower, not a
+    reason to fail.  **The result is identical either way** -- each game is
+    seeded independently and the list comes back in seed order, which a test
+    asserts.
+    """
+    jobs = [(agent_a, agent_b, seed + g, max_turns) for g in range(games)]
+    if workers is None:
+        workers = default_workers(games)
+    if workers > 1 and _picklable(jobs[0]):
+        out = []
+        for g, result in enumerate(_pool(workers).map(_run_paired, jobs)):
+            out.append(result[0])
+            if progress is not None:
+                progress(g, result[0], result[1:])
+        return out
+    out = []
+    for g, job in enumerate(jobs):
+        result = _run_paired(job)
+        out.append(result[0])
+        if progress is not None:
+            progress(g, result[0], result[1:])
+    return out
+
+
+def summarise(advantages) -> dict:
+    """Mean, standard error and a verdict -- the one place that decides.
+
+    Four separate copies of this arithmetic had grown across the tools, which is
+    three too many for a number every conclusion in the project rests on.
+    """
+    values = list(advantages)
+    if not values:
+        return {"advantage": 0.0, "stderr": 0.0, "games": 0,
+                "verdict": "unmeasured"}
+    mean = sum(values) / len(values)
+    if len(values) > 1:
+        variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+        stderr = math.sqrt(variance / len(values))
+    else:
+        stderr = 0.0
+    verdict = ("better" if mean > 2 * stderr else
+               "worse" if mean < -2 * stderr else "indistinguishable")
+    return {"advantage": mean, "stderr": stderr, "games": len(values),
+            "verdict": verdict, "advantages": values}
+
+
+def evaluate_paired(agent_a, agent_b, games: int = 20, seed: int = 0,
+                    max_turns: int = 45, workers: int | None = None,
+                    progress=None) -> dict:
+    """Is ``agent_a`` better than ``agent_b``?  Paired games, both seats."""
+    return summarise(paired_series(agent_a, agent_b, games=games, seed=seed,
+                                   max_turns=max_turns, workers=workers,
+                                   progress=progress))
 
 
 # --------------------------------------------------------------------------
@@ -550,11 +736,14 @@ def evaluator_report(net: ValueNetwork, games: int = 4, seed: int = 99,
 
 
 # --------------------------------------------------------------------------
-def tournament(entries: dict, games: int = 3, max_turns: int = 45,
-               seed: int = 0, progress=None, paired: bool = True):
+def tournament(entries: dict, games: int = 20, max_turns: int = 45,
+               seed: int = 0, progress=None, paired: bool = True,
+               workers: int | None = None):
     """Round-robin over paired games, with standard errors.
 
-    ``entries`` maps a label to a factory ``f(side, seed) -> Agent``.
+    ``entries`` maps a label to a factory ``f(side, seed) -> Agent``.  Build
+    them with :class:`AgentSpec` and each pairing is played across processes;
+    a lambda still works and simply runs in this one.
 
     Each pairing is played as mirrored games on a shared seed (see
     ``play_paired``), so the number reported for ``a`` against ``b`` is how much
@@ -575,24 +764,28 @@ def tournament(entries: dict, games: int = 3, max_turns: int = 45,
     samples: dict = {n: [] for n in names}
     for i, a in enumerate(names):
         for b in names[i + 1:]:
-            advantages = []
-            for g in range(games):
-                match_seed = seed * 131 + (abs(hash((a, b))) % 1000) + g
-                if paired:
-                    advantage, first, second = play_paired(
-                        entries[a], entries[b], seed=match_seed,
-                        max_turns=max_turns)
-                    if progress is not None:
-                        progress(a, b, g, advantage, (first, second))
-                else:
+            # A stable seed per pairing.  This used to be derived from
+            # ``hash((a, b))``, which Python randomises per process, so the same
+            # tournament drew different games on every run -- reproducibility
+            # lost in the one function whose entire job is comparable numbers.
+            base = seed * 131 + zlib.crc32(("%s|%s" % (a, b)).encode()) % 1000
+            if paired:
+                advantages = paired_series(
+                    entries[a], entries[b], games=games, seed=base,
+                    max_turns=max_turns, workers=workers,
+                    progress=(None if progress is None else
+                              lambda g, adv, halves, a=a, b=b:
+                              progress(a, b, g, adv, halves)))
+            else:
+                advantages = []
+                for g in range(games):
                     margin, result, _ = play_match(
-                        entries[a](IMPERIAL, match_seed),
-                        entries[b](ZHODANI, match_seed + 1),
-                        seed=match_seed, max_turns=max_turns)
-                    advantage = -margin
+                        entries[a](IMPERIAL, base + g),
+                        entries[b](ZHODANI, base + g + 1),
+                        seed=base + g, max_turns=max_turns)
+                    advantages.append(-margin)
                     if progress is not None:
-                        progress(a, b, g, advantage, result)
-                advantages.append(advantage)
+                        progress(a, b, g, -margin, result)
             mean = sum(advantages) / len(advantages)
             table[(a, b)] = mean
             table[(b, a)] = -mean
@@ -601,17 +794,12 @@ def tournament(entries: dict, games: int = 3, max_turns: int = 45,
 
     summary = {}
     for name in names:
-        values = samples[name]
-        mean = sum(values) / len(values) if values else 0.0
-        if len(values) > 1:
-            variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
-            stderr = math.sqrt(variance / len(values))
-        else:
-            stderr = 0.0
-        summary[name] = {"average": mean, "stderr": stderr,
-                         "pairings": len(values),
-                         "wins": sum(1 for v in values if v > 0),
-                         "losses": sum(1 for v in values if v < 0)}
+        stats = summarise(samples[name])
+        summary[name] = {"average": stats["advantage"],
+                         "stderr": stats["stderr"],
+                         "pairings": stats["games"],
+                         "wins": sum(1 for v in samples[name] if v > 0),
+                         "losses": sum(1 for v in samples[name] if v < 0)}
     return table, summary
 
 

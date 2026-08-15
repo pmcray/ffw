@@ -25,10 +25,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ffw.agents import HeuristicAgent, ScriptedAgent                  # noqa: E402
 from ffw.state import IMPERIAL, ZHODANI                               # noqa: E402
-from ffw.training import (load_agent, play_paired, save_agent,        # noqa: E402
-                          seat_bias, train_league, train_value_network)
+from ffw.training import (AgentSpec, evaluate_paired, load_agent,     # noqa: E402
+                          save_agent, seat_bias, train_league,
+                          train_value_network)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "ffw", "data")
@@ -98,28 +98,24 @@ def run_network(start, champions=None, games=70, max_turns=30, seed=13,
 
 
 # --------------------------------------------------------------------------
-def verify(champions, start, games=10, max_turns=40):
-    """Does the trained doctrine actually beat the stock one?  Paired games."""
+def verify(champions, start, games=60, max_turns=40):
+    """Does the trained doctrine actually beat the stock one?  Paired games.
+
+    Sixty rather than ten: at ten the standard error is around six victory
+    points, so a genuine twenty-point gain and a lucky five-point one look
+    alike.  Sixty costs about a minute across the machine's cores.
+    """
     print("== verification: trained vs stock, paired ==", flush=True)
     results = {}
     for side in (ZHODANI, IMPERIAL):
-        weights = champions[side]
-        trained = lambda s, d: HeuristicAgent(s, weights, seed=d)
-        stock = lambda s, d: ScriptedAgent(s, seed=d)
-        advantages = []
-        for g in range(games):
-            advantage, _, _ = play_paired(trained, stock, seed=4000 + g,
-                                          max_turns=max_turns)
-            advantages.append(advantage)
-        mean = sum(advantages) / len(advantages)
-        var = sum((a - mean) ** 2 for a in advantages) / max(1, len(advantages) - 1)
-        stderr = (var / len(advantages)) ** 0.5
-        verdict = ("better" if mean > 2 * stderr else
-                   "worse" if mean < -2 * stderr else "indistinguishable")
-        results[side] = {"advantage": mean, "stderr": stderr,
-                         "games": games, "verdict": verdict}
+        result = evaluate_paired(
+            AgentSpec(kind="heuristic", weights=champions[side]),
+            AgentSpec(kind="scripted"), games=games, seed=4000,
+            max_turns=max_turns)
+        results[side] = {k: v for k, v in result.items() if k != "advantages"}
         print("   %-8s %+7.1f +/- %5.1f VP over %d paired games -> %s   %s"
-              % (side, mean, stderr, games, verdict, elapsed(start)), flush=True)
+              % (side, result["advantage"], result["stderr"], games,
+                 result["verdict"], elapsed(start)), flush=True)
     return results
 
 

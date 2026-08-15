@@ -23,7 +23,7 @@ ffw/                      the game
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
-tests/test_ffw.py         110 tests, including the rulebook's worked examples
+tests/test_ffw.py         120 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -31,7 +31,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 110 tests, about 30 seconds
+python -m unittest discover tests          # 120 tests, about 50 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -331,6 +331,86 @@ the network learned the mean of a nearly constant label — a superb loss and no
 discrimination whatsoever. The second collected games from only one player's
 seat and scored the other seat's games *backwards*, at a held-out correlation of
 −0.49. In both cases the training loss looked excellent.
+
+### Measuring precisely enough to get an answer
+
+A paired game costs about 1.6 s and the standard error of a comparison falls as
+1/√games, so twenty paired games leaves ±4.7 VP — wider than most effects worth
+measuring here. Every "indistinguishable" verdict in this project came from
+sample sizes chosen when the engine was nine times slower, and nobody had spent
+the speedup.
+
+Games differ only by seed and share no state, so they parallelise perfectly. The
+only obstacle was that every agent factory in the codebase was a lambda, and a
+lambda cannot be pickled. `AgentSpec` is a factory made of plain data instead:
+
+```python
+from ffw.training import AgentSpec, evaluate_paired
+result = evaluate_paired(AgentSpec("doctrine"), AgentSpec("scripted"), games=120)
+# {'advantage': +6.5, 'stderr': 3.6, 'verdict': 'indistinguishable', ...}
+```
+
+3.8× on four cores, and **a test asserts parallel and serial return identical
+lists** — each game is seeded independently and results come back in seed order.
+A lambda still works and simply runs in this process; being unpicklable is a
+reason to be slower, not to fail. `FFW_WORKERS=1` pins it to one core.
+
+Two things were fixed on the way. `summarise` is now the single place that turns
+advantages into a verdict — that arithmetic had been copy-pasted into four tools,
+three too many for a number every conclusion rests on. And `tournament` seeded
+its pairings from `hash((a, b))`, which **Python randomises per process**: the
+one function whose entire job is comparable numbers had never been reproducible
+across runs. It uses a stable CRC now, with a test that spawns two interpreters
+and compares.
+
+### The first tournament with error bars worth reading
+
+40 paired games per pairing, five agents, about eight minutes:
+
+| agent | average | stderr | record |
+|---|---|---|---|
+| `HeuristicAgent` | +18.8 | ±2.7 | 104–56 |
+| `DoctrineAgent` | +16.5 | ±3.0 | 103–57 |
+| `NeuralAgent` | +13.4 | ±2.8 | 92–68 |
+| `ScriptedAgent` | +12.2 | ±2.9 | 101–59 |
+| `RandomAgent` | −60.8 | ±1.6 | 0–160 |
+
+The head-to-head numbers say more than the ranking:
+
+- **`ScriptedAgent`'s historical opening costs about 9 VP** (`heuristic` beats it
+  +9.4). It has been the "stock" baseline every training run was measured
+  against, and scripting the drive on Jewell–Efate–Regina is worse than letting
+  the doctrine choose.
+- **The value network makes play worse, not better** (`neural` loses to
+  `heuristic` by 4.9). That is consistent with everything else measured about it:
+  it predicts adequately and steers badly.
+- **`DoctrineAgent` is level with `HeuristicAgent`** (+0.1 over 40 paired games),
+  which is what makes the rule-based architecture a fair comparison rather than a
+  handicapped one.
+
+### A behaviour that turned out to be side-specific
+
+Re-running the picket question at 120 paired games — impossible before, ~2
+minutes now — showed the effect is asymmetric, and that the earlier verdict was
+noise in both directions:
+
+| | Imperial | Zhodani |
+|---|---|---|
+| first 120 games | +6.5 ± 3.6 | **−9.2 ± 4.0** ("worse") |
+| fresh 120 games | +3.4 ± 3.2 | −3.6 ± 3.9 (indistinguishable) |
+| **pooled, 240** | **+5.0 ± 2.4** | **−6.4 ± 2.8** |
+
+The first Zhodani block cleared 2σ and the confirmation block did not — the
+regression-to-the-mean lesson arriving on schedule, which is why the pooled
+figure is the one quoted. The reading is plain: the Imperium has nothing better
+for a spare escort to do, while the Zhodani are already collecting eight free
+worlds in the course of an advance their 6:1 sealift advantage is built around,
+so detaching a squadron costs the main effort more than the marginal world
+returns.
+
+The default is now side-aware, and verified on a **third** untouched seed block
+at **+3.7 ± 2.1** against the old always-on behaviour — positive in all three
+blocks, 1.8σ rather than decisive. `pickets=True/False` still overrides it.
 
 ### Training that can be shown to have worked
 

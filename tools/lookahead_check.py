@@ -17,34 +17,26 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ffw.agents import HeuristicAgent, LookaheadAgent, ScriptedAgent  # noqa: E402
-from ffw.training import play_paired                                  # noqa: E402
+from ffw.training import AgentSpec, evaluate_paired                   # noqa: E402
 
 
-def main(games=6, max_turns=40):
-    search = lambda s, d: LookaheadAgent(s, seed=d)
-    stock = lambda s, d: ScriptedAgent(s, seed=d)
-    doctrine = lambda s, d: HeuristicAgent(s, seed=d)
+def main(games=20, max_turns=40):
+    search = AgentSpec(kind="lookahead")
     start = time.time()
-    for name, other in (("scripted", stock), ("heuristic", doctrine)):
-        advantages = []
-        for g in range(games):
-            advantage, first, second = play_paired(search, other, seed=700 + g,
-                                                   max_turns=max_turns)
-            advantages.append(advantage)
-            print("   game %d  %+7.1f  (%.0f / %.0f)   %5.0fs"
-                  % (g, advantage, first, second, time.time() - start),
-                  flush=True)
-        mean = sum(advantages) / len(advantages)
-        var = sum((a - mean) ** 2 for a in advantages) / max(1, len(advantages) - 1)
-        stderr = (var / len(advantages)) ** 0.5
-        verdict = ("better" if mean > 2 * stderr else
-                   "worse" if mean < -2 * stderr else "indistinguishable")
+    for name, other in (("scripted", AgentSpec(kind="scripted")),
+                        ("heuristic", AgentSpec(kind="heuristic"))):
+        result = evaluate_paired(
+            search, other, games=games, seed=700, max_turns=max_turns,
+            progress=lambda g, adv, halves: print(
+                "   game %2d  %+7.1f  (%.0f / %.0f)   %5.0fs"
+                % (g, adv, halves[0], halves[1], time.time() - start),
+                flush=True))
         print("== lookahead vs %-9s %+7.1f +/- %5.1f VP over %d paired games"
-              " -> %s ==" % (name, mean, stderr, games, verdict), flush=True)
+              " -> %s ==" % (name, result["advantage"], result["stderr"],
+                             games, result["verdict"]), flush=True)
     print("total %.0f s" % (time.time() - start), flush=True)
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 6,
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 20,
          int(sys.argv[2]) if len(sys.argv) > 2 else 40)

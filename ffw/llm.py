@@ -32,12 +32,11 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from .agents import ScriptedAgent
 from .agents.doctrine import (DoctrineAgent, EFFECTS, ENUMS, FLAGS, NUMBERS,
                               POSTURE_KEYS, RuleError, RuleSet, default_rules)
 from .engine import new_game, play
 from .state import IMPERIAL, ZHODANI
-from .training import play_paired
+from .training import AgentSpec, evaluate_paired
 
 MODEL = "claude-opus-5"
 
@@ -294,22 +293,21 @@ def diagnose(ruleset: RuleSet, games: int = 4, max_turns: int = 40,
     }
 
 
-def evaluate(ruleset: RuleSet, against, games: int = 10, seed: int = 7000,
-             max_turns: int = 40) -> dict:
-    """Paired games, both seats, shared seeds: does this rule set play better?"""
-    candidate = lambda s, d: DoctrineAgent(s, ruleset, seed=d)
-    advantages = []
-    for g in range(games):
-        advantage, _, _ = play_paired(candidate, against, seed=seed + g,
-                                      max_turns=max_turns)
-        advantages.append(advantage)
-    mean = sum(advantages) / len(advantages)
-    var = sum((a - mean) ** 2 for a in advantages) / max(1, len(advantages) - 1)
-    stderr = (var / len(advantages)) ** 0.5
-    verdict = ("better" if mean > 2 * stderr else
-               "worse" if mean < -2 * stderr else "indistinguishable")
-    return {"advantage": mean, "stderr": stderr, "games": games,
-            "verdict": verdict}
+def evaluate(ruleset: RuleSet, against, games: int = 40, seed: int = 7000,
+             max_turns: int = 40, workers=None) -> dict:
+    """Paired games, both seats, shared seeds: does this rule set play better?
+
+    Forty games rather than a handful.  At twelve the standard error is about
+    six victory points -- wider than most doctrine changes are worth -- and a
+    loop that accepts on that is curating noise.
+    """
+    return evaluate_paired(spec_for(ruleset), against, games=games, seed=seed,
+                           max_turns=max_turns, workers=workers)
+
+
+def spec_for(ruleset: RuleSet) -> AgentSpec:
+    """A picklable factory for a rule set, so candidates grade in parallel."""
+    return AgentSpec(kind="doctrine", rules=ruleset.to_dict())
 
 
 # --------------------------------------------------------------------------
@@ -482,7 +480,7 @@ class EvolutionLog:
         return out
 
 
-def evolve(generations: int = 4, proposals: int = 4, games: int = 10,
+def evolve(generations: int = 4, proposals: int = 4, games: int = 40,
            ruleset: RuleSet | None = None, proposer=None, opponent=None,
            max_turns: int = 40, seed: int = 7000, diagnostic_games: int = 4,
            accept_sigma: float = 1.0, confirm_games: int = 0, progress=None):
@@ -505,7 +503,7 @@ def evolve(generations: int = 4, proposals: int = 4, games: int = 10,
     """
     incumbent = (ruleset or default_rules()).copy()
     proposer = proposer or ClaudeProposer()
-    against = opponent or (lambda s, d: ScriptedAgent(s, seed=d))
+    against = opponent or AgentSpec(kind="scripted")
     log = EvolutionLog()
 
     for generation in range(generations):
@@ -533,8 +531,7 @@ def evolve(generations: int = 4, proposals: int = 4, games: int = 10,
             # Common random numbers: every candidate in a generation is judged
             # on the same games, so the comparison is between doctrines rather
             # than between the seeds they happened to draw.
-            result = evaluate(proposal.ruleset,
-                              lambda s, d, r=incumbent: DoctrineAgent(s, r, seed=d),
+            result = evaluate(proposal.ruleset, spec_for(incumbent),
                               games=games, seed=seed + generation * 101,
                               max_turns=max_turns)
             proposal.advantage = result["advantage"]
@@ -554,8 +551,7 @@ def evolve(generations: int = 4, proposals: int = 4, games: int = 10,
         if best is not None and confirm_games:
             # Fresh seeds: the winner was picked partly for fitting the games it
             # was picked on, so make it win again on games it has never seen.
-            check = evaluate(best.ruleset,
-                             lambda s, d, r=incumbent: DoctrineAgent(s, r, seed=d),
+            check = evaluate(best.ruleset, spec_for(incumbent),
                              games=confirm_games,
                              seed=seed + 500_000 + generation * 101,
                              max_turns=max_turns)

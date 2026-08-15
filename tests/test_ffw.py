@@ -1258,3 +1258,90 @@ class TestProposalLoop(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             ClaudeProposer(client=FakeClient()).propose("briefing", 1)
         self.assertIn("cyber", str(caught.exception))
+
+
+class TestParallelEvaluation(unittest.TestCase):
+    """Games across processes must be a speedup, never a different answer."""
+
+    def test_a_spec_builds_every_kind_of_agent(self):
+        from ffw.training import AgentSpec
+        for kind in ("random", "heuristic", "scripted", "neural", "doctrine"):
+            agent = AgentSpec(kind)(IMPERIAL, 3)
+            self.assertEqual(agent.side, IMPERIAL)
+        with self.assertRaises(ValueError):
+            AgentSpec("nonesuch")(IMPERIAL, 1)
+
+    def test_a_spec_survives_pickling(self):
+        """The whole point: a factory that can cross a process boundary."""
+        import pickle
+        from ffw.agents.doctrine import default_rules
+        from ffw.training import AgentSpec
+        spec = AgentSpec("doctrine", rules=default_rules().to_dict())
+        restored = pickle.loads(pickle.dumps(spec))
+        self.assertEqual(restored.kind, "doctrine")
+        self.assertEqual(restored(ZHODANI, 1).side, ZHODANI)
+
+    def test_parallel_and_serial_give_identical_results(self):
+        from ffw.training import AgentSpec, paired_series
+        a, b = AgentSpec("scripted"), AgentSpec("heuristic")
+        parallel = paired_series(a, b, games=4, seed=4242, max_turns=10)
+        serial = paired_series(a, b, games=4, seed=4242, max_turns=10, workers=1)
+        self.assertEqual(parallel, serial)
+
+    def test_an_unpicklable_factory_still_runs(self):
+        """A lambda is a reason to be slower, not a reason to fail."""
+        from ffw.training import paired_series
+        factory = lambda side, seed: ScriptedAgent(side, seed=seed)
+        out = paired_series(factory, factory, games=2, seed=1, max_turns=8)
+        self.assertEqual(len(out), 2)
+
+    def test_workers_never_fan_out_from_inside_a_worker(self):
+        from ffw.training import default_workers
+        self.assertGreaterEqual(default_workers(8), 1)
+        os.environ["FFW_WORKERS"] = "1"
+        try:
+            self.assertEqual(default_workers(8), 1)
+        finally:
+            del os.environ["FFW_WORKERS"]
+
+    def test_summarise_calls_a_verdict_the_same_way_everywhere(self):
+        from ffw.training import summarise
+        self.assertEqual(summarise([])["verdict"], "unmeasured")
+        self.assertEqual(summarise([10.0] * 8)["verdict"], "better")
+        self.assertEqual(summarise([-10.0] * 8)["verdict"], "worse")
+        mixed = summarise([12.0, -11.0, 9.0, -10.0])
+        self.assertEqual(mixed["verdict"], "indistinguishable")
+
+    def test_tournament_seeds_are_stable_across_processes(self):
+        """They were derived from hash(), which Python randomises per run."""
+        import subprocess
+        script = ("import sys; sys.path.insert(0, %r);"
+                  "from ffw.training import tournament, AgentSpec;"
+                  "t, _ = tournament({'a': AgentSpec('scripted'),"
+                  " 'b': AgentSpec('heuristic')}, games=1, max_turns=6, seed=2);"
+                  "print(round(t[('a','b')], 6))" % os.path.dirname(
+                      os.path.dirname(os.path.abspath(__file__))))
+        runs = {subprocess.run([sys.executable, "-c", script],
+                               capture_output=True, text=True).stdout.strip()
+                for _ in range(2)}
+        self.assertEqual(len(runs), 1, "tournament is not reproducible: %s" % runs)
+
+
+class TestPicketDefault(unittest.TestCase):
+    """The one behaviour measured well enough to earn a side-specific default."""
+
+    def test_the_default_is_side_aware(self):
+        self.assertTrue(ScriptedAgent(IMPERIAL, seed=1).pickets)
+        self.assertFalse(ScriptedAgent(ZHODANI, seed=1).pickets)
+
+    def test_an_explicit_setting_still_wins(self):
+        self.assertFalse(ScriptedAgent(IMPERIAL, seed=1, pickets=False).pickets)
+        self.assertTrue(ScriptedAgent(ZHODANI, seed=1, pickets=True).pickets)
+
+    def test_the_doctrine_agent_takes_it_from_its_posture(self):
+        from ffw.agents import DoctrineAgent
+        from ffw.agents.doctrine import default_rules
+        off = default_rules().apply(
+            [{"action": "posture", "posture": {"pickets": False}}])
+        self.assertTrue(DoctrineAgent(ZHODANI, default_rules(), seed=1).pickets)
+        self.assertFalse(DoctrineAgent(IMPERIAL, off, seed=1).pickets)
