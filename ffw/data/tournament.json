@@ -1,0 +1,627 @@
+{
+ "games": 40,
+ "max_turns": 60,
+ "by_margin": [
+  {
+   "agent": "trained_imperial",
+   "average": 45.81979166666667,
+   "stderr": 2.7056253820470775,
+   "wins": 208,
+   "losses": 32
+  },
+  {
+   "agent": "trained_zhodani",
+   "average": 15.489583333333334,
+   "stderr": 2.660358999504971,
+   "wins": 155,
+   "losses": 85
+  },
+  {
+   "agent": "neural",
+   "average": 4.31875,
+   "stderr": 2.7981562893596026,
+   "wins": 137,
+   "losses": 103
+  },
+  {
+   "agent": "heuristic",
+   "average": 2.7177083333333334,
+   "stderr": 2.6013879168887883,
+   "wins": 118,
+   "losses": 121
+  },
+  {
+   "agent": "doctrine",
+   "average": -0.9395833333333333,
+   "stderr": 2.5271115318742083,
+   "wins": 117,
+   "losses": 123
+  },
+  {
+   "agent": "scripted",
+   "average": -2.404166666666667,
+   "stderr": 2.4542298891014274,
+   "wins": 102,
+   "losses": 137
+  },
+  {
+   "agent": "random",
+   "average": -65.00208333333333,
+   "stderr": 2.2249447557052426,
+   "wins": 2,
+   "losses": 238
+  }
+ ],
+ "by_level": [
+  {
+   "agent": "trained_imperial",
+   "average": 0.5166666666666667,
+   "stderr": 0.041739824199693236,
+   "wins": 157,
+   "losses": 27
+  },
+  {
+   "agent": "neural",
+   "average": 0.13541666666666666,
+   "stderr": 0.03707604570078997,
+   "wins": 100,
+   "losses": 54
+  },
+  {
+   "agent": "trained_zhodani",
+   "average": 0.10208333333333333,
+   "stderr": 0.03977555543990846,
+   "wins": 94,
+   "losses": 65
+  },
+  {
+   "agent": "heuristic",
+   "average": -0.05625,
+   "stderr": 0.037922566862039514,
+   "wins": 61,
+   "losses": 75
+  },
+  {
+   "agent": "scripted",
+   "average": -0.11666666666666667,
+   "stderr": 0.035609196520021154,
+   "wins": 60,
+   "losses": 88
+  },
+  {
+   "agent": "random",
+   "average": -0.12916666666666668,
+   "stderr": 0.04175287455619373,
+   "wins": 63,
+   "losses": 81
+  },
+  {
+   "agent": "doctrine",
+   "average": -0.45208333333333334,
+   "stderr": 0.031161543799175517,
+   "wins": 14,
+   "losses": 159
+  }
+ ],
+ "pairings": [
+  {
+   "a": "heuristic",
+   "b": "scripted",
+   "margin": {
+    "advantage": 2.175,
+    "stderr": 3.9144722439580475,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.0375,
+    "stderr": 0.06550469742404269,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 12,
+     "zhodani marginal victory": 45,
+     "zhodani major victory": 23
+    }
+   }
+  },
+  {
+   "a": "heuristic",
+   "b": "doctrine",
+   "margin": {
+    "advantage": 2.4,
+    "stderr": 4.71385369593358,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.3,
+    "stderr": 0.08733959656539024,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory levels",
+    "results": {
+     "imperial major victory": 1,
+     "imperial marginal victory": 6,
+     "stalemate": 44,
+     "zhodani marginal victory": 22,
+     "zhodani major victory": 7
+    }
+   }
+  },
+  {
+   "a": "heuristic",
+   "b": "random",
+   "margin": {
+    "advantage": 55.46875,
+    "stderr": 3.731258589948451,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.0875,
+    "stderr": 0.06907701944485314,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 4,
+     "zhodani marginal victory": 17,
+     "zhodani major victory": 57,
+     "zhodani automatic victory": 2
+    }
+   }
+  },
+  {
+   "a": "heuristic",
+   "b": "neural",
+   "margin": {
+    "advantage": -0.81875,
+    "stderr": 6.327525513706173,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.1125,
+    "stderr": 0.10045968064799643,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 1,
+     "stalemate": 14,
+     "zhodani marginal victory": 38,
+     "zhodani major victory": 25,
+     "zhodani automatic victory": 2
+    }
+   }
+  },
+  {
+   "a": "heuristic",
+   "b": "trained_imperial",
+   "margin": {
+    "advantage": -30.8625,
+    "stderr": 4.352358537591266,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.375,
+    "stderr": 0.0992762269164639,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial major victory": 1,
+     "imperial marginal victory": 6,
+     "stalemate": 26,
+     "zhodani marginal victory": 32,
+     "zhodani major victory": 14,
+     "zhodani automatic victory": 1
+    }
+   }
+  },
+  {
+   "a": "heuristic",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": -12.05625,
+    "stderr": 5.67339217806153,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.2,
+    "stderr": 0.09607689228305226,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 2,
+     "stalemate": 21,
+     "zhodani marginal victory": 28,
+     "zhodani major victory": 28,
+     "zhodani automatic victory": 1
+    }
+   }
+  },
+  {
+   "a": "scripted",
+   "b": "doctrine",
+   "margin": {
+    "advantage": -7.44375,
+    "stderr": 4.354323738118946,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.2125,
+    "stderr": 0.06907701944485312,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 4,
+     "stalemate": 51,
+     "zhodani marginal victory": 23,
+     "zhodani major victory": 2
+    }
+   }
+  },
+  {
+   "a": "scripted",
+   "b": "random",
+   "margin": {
+    "advantage": 52.93125,
+    "stderr": 4.163755272918476,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.0,
+    "stderr": 0.05937710859953544,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 2,
+     "zhodani marginal victory": 28,
+     "zhodani major victory": 50
+    }
+   }
+  },
+  {
+   "a": "scripted",
+   "b": "neural",
+   "margin": {
+    "advantage": -5.275,
+    "stderr": 4.138679725684855,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.125,
+    "stderr": 0.06875728399641817,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 1,
+     "stalemate": 8,
+     "zhodani marginal victory": 43,
+     "zhodani major victory": 28
+    }
+   }
+  },
+  {
+   "a": "scripted",
+   "b": "trained_imperial",
+   "margin": {
+    "advantage": -39.26875,
+    "stderr": 4.327474350566123,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.6125,
+    "stderr": 0.11249999999999999,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial major victory": 1,
+     "imperial marginal victory": 10,
+     "stalemate": 26,
+     "zhodani marginal victory": 21,
+     "zhodani major victory": 20,
+     "zhodani automatic victory": 2
+    }
+   }
+  },
+  {
+   "a": "scripted",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": -13.19375,
+    "stderr": 4.097103490420757,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.2125,
+    "stderr": 0.07983857913282724,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 1,
+     "stalemate": 14,
+     "zhodani marginal victory": 36,
+     "zhodani major victory": 28,
+     "zhodani automatic victory": 1
+    }
+   }
+  },
+  {
+   "a": "doctrine",
+   "b": "random",
+   "margin": {
+    "advantage": 47.83125,
+    "stderr": 4.6308468543173635,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.525,
+    "stderr": 0.06686668711812965,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 39,
+     "zhodani marginal victory": 22,
+     "zhodani major victory": 19
+    }
+   }
+  },
+  {
+   "a": "doctrine",
+   "b": "neural",
+   "margin": {
+    "advantage": -7.83125,
+    "stderr": 5.0606370226801,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.5625,
+    "stderr": 0.07202986382085755,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 8,
+     "stalemate": 37,
+     "zhodani marginal victory": 25,
+     "zhodani major victory": 10
+    }
+   }
+  },
+  {
+   "a": "doctrine",
+   "b": "trained_imperial",
+   "margin": {
+    "advantage": -35.95,
+    "stderr": 4.529392966063515,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.625,
+    "stderr": 0.06875728399641817,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 9,
+     "stalemate": 40,
+     "zhodani marginal victory": 19,
+     "zhodani major victory": 12
+    }
+   }
+  },
+  {
+   "a": "doctrine",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": -14.73125,
+    "stderr": 5.069322227334862,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.4875,
+    "stderr": 0.07486633388057644,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 5,
+     "stalemate": 42,
+     "zhodani marginal victory": 22,
+     "zhodani major victory": 11
+    }
+   }
+  },
+  {
+   "a": "random",
+   "b": "neural",
+   "margin": {
+    "advantage": -60.15625,
+    "stderr": 3.9649474515142358,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.175,
+    "stderr": 0.08115749171541996,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 3,
+     "zhodani marginal victory": 28,
+     "zhodani major victory": 46,
+     "zhodani automatic victory": 3
+    }
+   }
+  },
+  {
+   "a": "random",
+   "b": "trained_imperial",
+   "margin": {
+    "advantage": -110.5875,
+    "stderr": 4.938666691111827,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.8875,
+    "stderr": 0.10961397884838575,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 1,
+     "stalemate": 32,
+     "zhodani marginal victory": 14,
+     "zhodani major victory": 25,
+     "zhodani automatic victory": 8
+    }
+   }
+  },
+  {
+   "a": "random",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": -63.0375,
+    "stderr": 4.647179579580694,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.15,
+    "stderr": 0.08046340145904207,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 6,
+     "zhodani marginal victory": 28,
+     "zhodani major victory": 45,
+     "zhodani automatic victory": 1
+    }
+   }
+  },
+  {
+   "a": "neural",
+   "b": "trained_imperial",
+   "margin": {
+    "advantage": -32.39375,
+    "stderr": 5.339828933295426,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": -0.2125,
+    "stderr": 0.08375693618426093,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory levels",
+    "results": {
+     "stalemate": 24,
+     "zhodani marginal victory": 37,
+     "zhodani major victory": 18,
+     "zhodani automatic victory": 1
+    }
+   }
+  },
+  {
+   "a": "neural",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": -15.775,
+    "stderr": 5.947289837418083,
+    "games": 40,
+    "verdict": "worse",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.05,
+    "stderr": 0.09439415453435882,
+    "games": 40,
+    "verdict": "indistinguishable",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 1,
+     "stalemate": 12,
+     "zhodani marginal victory": 39,
+     "zhodani major victory": 26,
+     "zhodani automatic victory": 2
+    }
+   }
+  },
+  {
+   "a": "trained_imperial",
+   "b": "trained_zhodani",
+   "margin": {
+    "advantage": 25.85625,
+    "stderr": 5.132256334999356,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory points"
+   },
+   "level": {
+    "advantage": 0.3875,
+    "stderr": 0.10204244340670332,
+    "games": 40,
+    "verdict": "better",
+    "unit": "victory levels",
+    "results": {
+     "imperial marginal victory": 9,
+     "stalemate": 30,
+     "zhodani marginal victory": 24,
+     "zhodani major victory": 17
+    }
+   }
+  }
+ ],
+ "results": {
+  "imperial major victory": 3,
+  "imperial marginal victory": 64,
+  "stalemate": 487,
+  "zhodani marginal victory": 591,
+  "zhodani major victory": 511,
+  "zhodani automatic victory": 24
+ }
+}
