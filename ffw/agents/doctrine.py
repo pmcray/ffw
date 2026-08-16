@@ -83,6 +83,8 @@ POSTURE_KEYS = {
     "disengage_ratio": float,    # break off when outgunned by this much
     "guerrilla_boldness": float, # how readily Zhodani guerrillas rise
     "armistice_margin": float,   # Zhodani: call it off when ahead by this
+    "armistice_turn": float,     # ... but not before this turn
+    "armistice_slide": float,    # unless the margin has fallen by this much
     "bomb_defenses_first": bool, # soften battalions before enemy troops
 }
 
@@ -91,6 +93,13 @@ DEFAULT_POSTURE = {
     "disengage_ratio": 1.9,
     "guerrilla_boldness": 0.35,
     "armistice_margin": 60.0,
+    # Rule 8 shifts the victory table two levels towards the Imperium for an
+    # armistice through turn 51 and one from turn 52.  A level is fifty to a
+    # hundred victory points, so the boundary is worth more than almost
+    # anything a fleet can do in the same time, and the only reason to pay the
+    # extra level is a position sliding faster than that.
+    "armistice_turn": 52.0,
+    "armistice_slide": 40.0,
     "bomb_defenses_first": True,
 }
 
@@ -530,11 +539,25 @@ class DoctrineAgent(HeuristicAgent):
                           and unit.losses < 60)
 
     def declare_armistice(self, state, engine):
+        """As the doctrine, but with the boundary written into the posture.
+
+        This used to declare at turn 40 whenever ahead, which pays two victory
+        levels where waiting for turn 52 pays one -- the single most expensive
+        mistake measured in this project, and one the round robin only exposed
+        once games ran long enough for the armistice to fire at all.
+        """
         if self.side != ZHODANI:
             return False
-        return (state.turn >= 40
-                and state.victory_margin()
-                > float(self.ruleset.posture["armistice_margin"]))
+        posture = self.ruleset.posture
+        margin = state.victory_margin()
+        self._margin_log.append(margin)
+        if margin <= float(posture["armistice_margin"]):
+            return False
+        if state.turn >= float(posture["armistice_turn"]):
+            return True
+        window = self._margin_log[-6:]
+        slide = float(posture["armistice_slide"])
+        return len(window) >= 5 and window[-1] < window[0] - slide
 
     def bombing_targets(self, state, side, hex_id, bombard, engine):
         if self.ruleset.posture["bomb_defenses_first"]:

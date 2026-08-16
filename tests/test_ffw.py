@@ -1811,3 +1811,77 @@ class TestTrainingObjective(unittest.TestCase):
         from ffw.agents import DEFAULT_WEIGHTS
         self.assertEqual(set(weights), set(DEFAULT_WEIGHTS))
         self.assertEqual(len(log.generations), 1)
+
+
+class TestDoctrineArmistice(unittest.TestCase):
+    """The turn-52 boundary, written into the rule set rather than the code.
+
+    ``HeuristicAgent`` and ``NeuralAgent`` were fixed when the armistice was
+    first audited; ``DoctrineAgent`` overrides ``declare_armistice`` outright
+    and was missed.  The round robin caught it, and only because it was the
+    first one run long enough for the armistice to fire: by victory-point
+    margin the doctrine agent looked level with the heuristic (+2.4 +/- 4.7),
+    and by victory level it was losing decisively (+0.30 +/- 0.09 against it).
+    That gap is the whole reason the tournament now reports both.
+    """
+
+    def _agent(self, **posture):
+        from ffw.agents import DoctrineAgent
+        from ffw.agents.doctrine import default_rules
+        rules = default_rules()
+        if posture:
+            rules = rules.apply([{"action": "posture", "posture": posture}])
+        return DoctrineAgent(ZHODANI, rules, seed=1)
+
+    def test_the_boundary_is_in_the_posture_not_the_code(self):
+        from ffw.agents.doctrine import DEFAULT_POSTURE, POSTURE_KEYS
+        self.assertEqual(DEFAULT_POSTURE["armistice_turn"], 52.0)
+        for key in ("armistice_turn", "armistice_slide"):
+            self.assertIn(key, POSTURE_KEYS)
+
+    def test_it_waits_for_the_cheaper_boundary(self):
+        agent = self._agent()
+        state = new_game(seed=90)
+
+        class Stub:
+            pass
+        for turn, expected in ((26, False), (40, False), (51, False),
+                               (52, True), (57, True)):
+            agent._margin_log = []
+            state.turn = turn
+            state.victory_margin = lambda: 200.0
+            self.assertEqual(agent.declare_armistice(state, Stub()), expected,
+                             "turn %d" % turn)
+
+    def test_a_rule_set_may_move_the_boundary(self):
+        """The point of a doctrine in words is that this is editable."""
+        agent = self._agent(armistice_turn=30.0)
+        state = new_game(seed=91)
+        state.turn = 31
+        state.victory_margin = lambda: 200.0
+
+        class Stub:
+            pass
+        self.assertTrue(agent.declare_armistice(state, Stub()))
+
+    def test_a_collapsing_position_is_still_cashed_in_early(self):
+        agent = self._agent()
+        state = new_game(seed=92)
+        state.turn = 40
+
+        class Stub:
+            pass
+        for margin in (260.0, 240.0, 220.0, 200.0, 150.0):
+            state.victory_margin = lambda m=margin: m
+            declared = agent.declare_armistice(state, Stub())
+        self.assertTrue(declared)
+
+    def test_a_thin_lead_is_never_cashed_in(self):
+        agent = self._agent()
+        state = new_game(seed=93)
+        state.turn = 55
+        state.victory_margin = lambda: 10.0
+
+        class Stub:
+            pass
+        self.assertFalse(agent.declare_armistice(state, Stub()))
