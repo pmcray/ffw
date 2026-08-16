@@ -23,7 +23,9 @@ ffw/                      the game
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
-tests/test_ffw.py         148 tests, including the rulebook's worked examples
+tests/test_ffw.py         164 tests, including the rulebook's worked examples
+tests/test_ie.py          107 tests for Invasion: Earth
+ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -31,7 +33,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 148 tests, about 50 seconds
+python -m unittest discover tests          # 271 tests, about 90 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -706,6 +708,121 @@ comparison, reporting the worlds claimed as well as the margin, because the
 direct tally is far less noisy than a game result. Both halves can be switched
 off independently: `pickets=False` stops the detachment, `free_world=0` stops
 free worlds pulling on ordinary fleets.
+
+## Invasion: Earth
+
+The second game in the series, *Invasion: Earth* (GDW, 1981), lives in `ie/`
+alongside `ffw/`. It is the assault on Terra at the end of the Solomani Rim
+War: one player commands the Imperial invasion force, the other the defence of
+the homeworld.
+
+```bash
+python -m unittest tests.test_ie      # 107 tests
+```
+
+```python
+from ie.engine import new_game, play
+from ie.agents import HeuristicAgent
+from ie.state import IMPERIAL, SOLOMANI
+
+state = new_game(seed=1)
+print(play(state, HeuristicAgent(IMPERIAL, seed=1),
+           HeuristicAgent(SOLOMANI, seed=2), max_turns=24))
+```
+
+### The map is a sphere
+
+*Invasion: Earth* prints Terra "projected onto the twenty triangular sides of an
+icosahedron", then adds two rules whose only purpose is to undo the damage the
+paper does:
+
+> A hex divided between two or more of these triangles is considered to be a
+> single hex for all purposes.
+>
+> The eastern and western edges of the map are considered to be adjacent, and a
+> half hex on one side of the map has its other half on the other side.
+
+Applied, those sentences describe a **hex grid on a sphere**, and a sphere is
+something a program can hold directly with no seams to apologise for. So
+`ie/hexmap.py` builds a Goldberg polyhedron — the dual of a subdivided
+icosahedron — rather than digitising a scan of a folded sheet. Every cell is a
+hexagon except exactly twelve pentagons at the icosahedron's vertices, and that
+twelve is not a modelling choice but Euler's formula: a sphere cannot be tiled
+with hexagons alone, which is precisely *why* the printed map needs seams.
+
+Frequency 7 gives 492 cells at 1094 km across, against the rulebook's stated
+1148; frequency 6 would give 1270. Adjacency wraps in every direction and both
+poles are ordinary cells.
+
+Terra's surface is authored as data — land as longitude spans per latitude
+band, then named regions layered over it — rather than colour-sampled off the
+scan, because a table of coastlines can be read and argued with and a colour
+threshold cannot. The cities are then trimmed to exactly the **61 urban hexes**
+rule 6 states, by ranking land hexes on how many urban regions claim them. That
+count is load-bearing: the Solomani draw one replacement point per ungarrisoned
+urban hex every turn, and the game ends when fewer than ten remain to them.
+
+### What the rulebook makes testable
+
+Unusually for a 1981 wargame, this one states enough numbers to check the
+implementation against: four combat tables, a counter inventory, an order of
+battle chart with exact counts, and worked examples with the dice given.
+
+- All four combat tables are transcribed literally rather than fitted. They are
+  not curves — the space combat columns step 1, 3, 6, 12, 18, 24 and then by
+  sixes, which is a designer's judgement about diminishing returns.
+- The page-7 surface combat example reproduces on all four of its attacks,
+  including both odds-rounding cases (`13:5 → 2:1`, `25:2 → 10:1`) and the
+  two-column tech shift.
+- The order of battle matches the chart on every line: 42 Imperial squadrons in
+  five types, 8 Solomani squadrons, 34 SDB wings, 24 planetary defence units,
+  and both sides' troops by size. Two Solomani blocks had to be read off the
+  counter sheet image, because the extracted text had dropped two divisions and
+  two regiments.
+
+### Fire is pooled, and it matters more than it sounds
+
+Both bombardment rules say to total the firers before reading the column:
+
+> Total the bombardment factors of all units bombarding a given surface unit to
+> determine the column used on the table.
+>
+> All naval units in the close orbit box defend as a single group ... by
+> totalling the bombardment factors of all PD units and SDB wings firing upon a
+> group of naval units.
+
+The first implementation resolved one attack per firer, which let the
+twenty-four Solomani planetary defence units make two dozen attacks a turn on
+the fleet instead of one. It destroyed the Imperial navy by turn 12 of every
+game. `TestBombardmentPooling` now holds the rule down.
+
+### The Imperial problem is shipping, then fighting
+
+Every Imperial unit starts in the out-system box. Total lift is 2875 combat
+factors against an army of 4040 — and two of the four 600-factor transport
+squadrons are withdrawn on turn 2 — so the invasion is three convoys, not one.
+A transport that unloads and then parks in orbit is the difference between
+landing forty percent of the army and landing all of it.
+
+Two rules dominate everything the doctrine does:
+
+- **The assault modifier.** A unit landing in or leaving a hex is fired on by
+  every planetary defence within three hexes, at **-3** on the surface
+  bombardment table unless it is a marine or jump troop. Making the doctrine
+  weight that penalty properly — it is the heaviest single term in the landing
+  score — more than doubled what it got ashore, from 302 factors to 700.
+- **Grav mobility.** Solomani troops have ten movement points and a hex is
+  1100 km, so they can mass on any single Imperial stack from a third of the
+  way round the planet. There is no safe beach, only distance from the mass.
+
+**Where the doctrine stands:** it lands and holds around 700 combat factors,
+and does not yet convert that into garrisoned cities. Garrisoning is by zone of
+control — one corps covers its hex and six more — but a hex in a Solomani zone
+of control cannot be garrisoned, so the Imperium has to destroy the local
+defenders first, and 700 factors against 4180 is not enough to do it. The
+engine implements the rules; the Imperial doctrine has not solved the game.
+That is the honest state of it, and it is exactly the kind of gap the training
+framework in `ffw/training.py` exists to close.
 
 ## Known limits
 
