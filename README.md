@@ -25,6 +25,8 @@ ffw/                      the game
                           doctrine (written rules), human
 tests/test_ffw.py         164 tests, including the rulebook's worked examples
 tests/test_ie.py          107 tests for Invasion: Earth
+tests/test_strategy.py    24 tests for the shared cross-game layer
+strategy/                 shared feature encoding and game adapters
 ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
 tools/                    data extraction, agent training, notebook generation
 ```
@@ -33,7 +35,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 271 tests, about 90 seconds
+python -m unittest discover tests          # 295 tests, about 100 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -823,6 +825,65 @@ defenders first, and 700 factors against 4180 is not enough to do it. The
 engine implements the rules; the Imperial doctrine has not solved the game.
 That is the honest state of it, and it is exactly the kind of gap the training
 framework in `ffw/training.py` exists to close.
+
+## Transfer: one encoding, two games
+
+The goal is agents that are good at *strategy*, not good at one game, and the
+only way to find out whether you have one is to point it at a game it has never
+seen. `strategy/` is the layer that makes that askable. Three things are
+shared and nothing else:
+
+- **`GameAdapter`** — a description of a game that training code can drive
+  without knowing which game it is. There is one per rulebook and they are
+  deliberately short; if either starts growing game logic, the shared layer is
+  reaching into a rulebook it does not own.
+- **`strategy.features.encode`** — a 16-slot vector in which a position from
+  either game means the same thing, written from the perspective of the side
+  being asked about so one network serves both seats.
+- **The evaluation protocol** — paired games, victory margin and victory level.
+  That already exists in `ffw/training.py` and is reused rather than rebuilt.
+
+The engines stay separate. The two rulebooks are genuinely different — plotted
+jump movement and refuelling against grav-mobile ground war and orbital
+bombardment — and one engine serving both would be a worse model of each. What
+transfers is not code but skill, and skill transfers through the features.
+
+The encoding asks the questions both games answer: what share of the objectives
+do I hold and which way is it moving; how much force have I got, how far
+forward is it, how concentrated; how much of the clock is gone; how far is my
+army from its objectives and from theirs; is it in supply. Those are the same
+questions in either century. What it deliberately does *not* carry is jump
+numbers, refuelling status, SDB hiding, or planetary defence ranges — a
+doctrine that only plays through these sixteen numbers is playing a coarser
+game than either rulebook describes, and that is the price of transfer.
+
+### Does it actually transfer? Not yet demonstrated
+
+`tools/transfer_check.py` fits a small value network on positions from one game
+and asks how well it predicts outcomes in the other, against the baseline of
+what the single `score_margin` slot achieves alone:
+
+| direction | own-game | cross-game | `score_margin` alone |
+|---|---|---|---|
+| `ffw → ie` | +0.305 | +0.321 | **+0.466** |
+| `ie → ffw` | +0.272 | −0.311 | **+0.319** |
+
+Neither direction beats its baseline, so what these runs show is that *one
+feature* carries across, not that a network does. The samples are small — six
+games a side — so this is "not demonstrated", not "does not happen".
+
+The first run of this tool was worse than uninformative and is worth recording.
+It printed a cross-game correlation of exactly +0.000 and a confident verdict,
+and both were meaningless: every *Invasion: Earth* game had ended on the same
+label, because the Imperial doctrine never takes a city. **A correlation
+against a constant is undefined, not zero**, and the two print identically.
+The tool now checks the outcome spread before it reports anything and says
+which kind of zero it is — the same failure that produced a training loss curve
+on constant labels earlier in this project, caught faster the second time.
+
+The honest reading: the plumbing is built and tested, and the interesting
+experiment is blocked behind an Imperial doctrine for *Invasion: Earth* good
+enough for its games to have varied outcomes.
 
 ## Known limits
 

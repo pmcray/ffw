@@ -1,0 +1,26 @@
+{
+ "games": 6,
+ "max_turns": 12,
+ "directions": {
+  "ffw->ie": {
+   "own": 0.30456091867015395,
+   "cross": 0.3211540340720123,
+   "baseline": 0.4662524041201569,
+   "source_label_constant": false,
+   "target_label_constant": false,
+   "verdict": "no better than the score slot alone"
+  },
+  "ie->ffw": {
+   "own": 0.272330548505109,
+   "cross": -0.3105533715666956,
+   "baseline": 0.3188077475254436,
+   "source_label_constant": false,
+   "target_label_constant": false,
+   "verdict": "no better than the score slot alone"
+  }
+ },
+ "label_spread": {
+  "ffw": 0.06900360072909417,
+  "ie": 0.012218950696720176
+ }
+}
