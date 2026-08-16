@@ -672,6 +672,13 @@ free worlds pulling on ordinary fleets.
   do not resolve.
 - Xboat routes are the canonical Traveller network filtered to the mapped
   worlds, not a hand transcription of the green lines on the map.
+- The opening fleet-marker allotment (`oob.INITIAL_FLEETS`) is read off the
+  rulebook's account of the opening rather than quoted from the order of battle
+  charts, which are printed on the player aid and are not in the PDF. What the
+  booklet does settle is that the allotment is smaller than the counter mix.
+- The warrant is handed to the senior Imperial admiral when it is drawn and
+  stays there. Rule 5 lets it be transferred between admirals in the same hex
+  during the fleet adjustment step; no agent is offered that choice.
 
 ## Credits
 
