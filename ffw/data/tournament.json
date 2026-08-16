@@ -4,103 +4,103 @@
  "by_margin": [
   {
    "agent": "trained_imperial",
-   "average": 45.81979166666667,
-   "stderr": 2.7056253820470775,
-   "wins": 208,
-   "losses": 32
+   "average": 46.678125,
+   "stderr": 2.7008636321403903,
+   "wins": 209,
+   "losses": 31
   },
   {
    "agent": "trained_zhodani",
-   "average": 15.489583333333334,
-   "stderr": 2.660358999504971,
+   "average": 15.397916666666667,
+   "stderr": 2.669936891548636,
    "wins": 155,
-   "losses": 85
+   "losses": 84
   },
   {
    "agent": "neural",
-   "average": 4.31875,
-   "stderr": 2.7981562893596026,
-   "wins": 137,
+   "average": 4.392708333333333,
+   "stderr": 2.824985419605378,
+   "wins": 136,
    "losses": 103
   },
   {
    "agent": "heuristic",
-   "average": 2.7177083333333334,
-   "stderr": 2.6013879168887883,
-   "wins": 118,
-   "losses": 121
-  },
-  {
-   "agent": "doctrine",
-   "average": -0.9395833333333333,
-   "stderr": 2.5271115318742083,
-   "wins": 117,
+   "average": 2.9208333333333334,
+   "stderr": 2.6008163106518443,
+   "wins": 115,
    "losses": 123
   },
   {
+   "agent": "doctrine",
+   "average": -1.5302083333333334,
+   "stderr": 2.6743907871615136,
+   "wins": 117,
+   "losses": 120
+  },
+  {
    "agent": "scripted",
-   "average": -2.404166666666667,
-   "stderr": 2.4542298891014274,
-   "wins": 102,
-   "losses": 137
+   "average": -2.357291666666667,
+   "stderr": 2.4562411601921386,
+   "wins": 103,
+   "losses": 136
   },
   {
    "agent": "random",
-   "average": -65.00208333333333,
-   "stderr": 2.2249447557052426,
-   "wins": 2,
-   "losses": 238
+   "average": -65.50208333333333,
+   "stderr": 2.222511944571846,
+   "wins": 1,
+   "losses": 239
   }
  ],
  "by_level": [
   {
    "agent": "trained_imperial",
-   "average": 0.5166666666666667,
-   "stderr": 0.041739824199693236,
-   "wins": 157,
-   "losses": 27
+   "average": 0.4895833333333333,
+   "stderr": 0.042008491523322804,
+   "wins": 152,
+   "losses": 29
   },
   {
    "agent": "neural",
-   "average": 0.13541666666666666,
-   "stderr": 0.03707604570078997,
-   "wins": 100,
-   "losses": 54
+   "average": 0.05625,
+   "stderr": 0.03505589902549005,
+   "wins": 81,
+   "losses": 61
   },
   {
    "agent": "trained_zhodani",
-   "average": 0.10208333333333333,
-   "stderr": 0.03977555543990846,
-   "wins": 94,
-   "losses": 65
-  },
-  {
-   "agent": "heuristic",
-   "average": -0.05625,
-   "stderr": 0.037922566862039514,
-   "wins": 61,
-   "losses": 75
-  },
-  {
-   "agent": "scripted",
-   "average": -0.11666666666666667,
-   "stderr": 0.035609196520021154,
-   "wins": 60,
-   "losses": 88
-  },
-  {
-   "agent": "random",
-   "average": -0.12916666666666668,
-   "stderr": 0.04175287455619373,
-   "wins": 63,
-   "losses": 81
+   "average": 0.04791666666666667,
+   "stderr": 0.0391014305075395,
+   "wins": 86,
+   "losses": 76
   },
   {
    "agent": "doctrine",
-   "average": -0.45208333333333334,
-   "stderr": 0.031161543799175517,
-   "wins": 14,
-   "losses": 159
+   "average": -0.05625,
+   "stderr": 0.0365173734946204,
+   "wins": 71,
+   "losses": 82
+  },
+  {
+   "agent": "heuristic",
+   "average": -0.12083333333333333,
+   "stderr": 0.03746123829653041,
+   "wins": 51,
+   "losses": 88
+  },
+  {
+   "agent": "scripted",
+   "average": -0.19583333333333333,
+   "stderr": 0.03475753666737094,
+   "wins": 43,
+   "losses": 100
+  },
+  {
+   "agent": "random",
+   "average": -0.22083333333333333,
+   "stderr": 0.038221404415099365,
+   "wins": 45,
+   "losses": 93
   }
  ],
  "pairings": [
@@ -131,24 +131,24 @@
    "a": "heuristic",
    "b": "doctrine",
    "margin": {
-    "advantage": 2.4,
-    "stderr": 4.71385369593358,
+    "advantage": 3.61875,
+    "stderr": 4.700978378629937,
     "games": 40,
     "verdict": "indistinguishable",
     "unit": "victory points"
    },
    "level": {
-    "advantage": 0.3,
-    "stderr": 0.08733959656539024,
+    "advantage": -0.0875,
+    "stderr": 0.1010957593774465,
     "games": 40,
-    "verdict": "better",
+    "verdict": "indistinguishable",
     "unit": "victory levels",
     "results": {
      "imperial major victory": 1,
-     "imperial marginal victory": 6,
-     "stalemate": 44,
-     "zhodani marginal victory": 22,
-     "zhodani major victory": 7
+     "imperial marginal victory": 4,
+     "stalemate": 24,
+     "zhodani marginal victory": 37,
+     "zhodani major victory": 14
     }
    }
   },
@@ -256,23 +256,23 @@
    "a": "scripted",
    "b": "doctrine",
    "margin": {
-    "advantage": -7.44375,
-    "stderr": 4.354323738118946,
+    "advantage": -7.1625,
+    "stderr": 4.403893145813552,
     "games": 40,
     "verdict": "indistinguishable",
     "unit": "victory points"
    },
    "level": {
-    "advantage": 0.2125,
-    "stderr": 0.06907701944485312,
+    "advantage": -0.2625,
+    "stderr": 0.07592907452994774,
     "games": 40,
-    "verdict": "better",
+    "verdict": "worse",
     "unit": "victory levels",
     "results": {
      "imperial marginal victory": 4,
-     "stalemate": 51,
-     "zhodani marginal victory": 23,
-     "zhodani major victory": 2
+     "stalemate": 19,
+     "zhodani marginal victory": 49,
+     "zhodani major victory": 8
     }
    }
   },
@@ -378,22 +378,23 @@
    "a": "doctrine",
    "b": "random",
    "margin": {
-    "advantage": 47.83125,
-    "stderr": 4.6308468543173635,
+    "advantage": 50.83125,
+    "stderr": 4.847294608752232,
     "games": 40,
     "verdict": "better",
     "unit": "victory points"
    },
    "level": {
-    "advantage": -0.525,
-    "stderr": 0.06686668711812965,
+    "advantage": 0.025,
+    "stderr": 0.07793406154383298,
     "games": 40,
-    "verdict": "worse",
+    "verdict": "indistinguishable",
     "unit": "victory levels",
     "results": {
-     "stalemate": 39,
-     "zhodani marginal victory": 22,
-     "zhodani major victory": 19
+     "imperial marginal victory": 1,
+     "stalemate": 8,
+     "zhodani marginal victory": 37,
+     "zhodani major victory": 34
     }
    }
   },
@@ -401,23 +402,23 @@
    "a": "doctrine",
    "b": "neural",
    "margin": {
-    "advantage": -7.83125,
-    "stderr": 5.0606370226801,
+    "advantage": -8.275,
+    "stderr": 5.574321563870881,
     "games": 40,
     "verdict": "indistinguishable",
     "unit": "victory points"
    },
    "level": {
-    "advantage": -0.5625,
-    "stderr": 0.07202986382085755,
+    "advantage": -0.0875,
+    "stderr": 0.0735707839866496,
     "games": 40,
-    "verdict": "worse",
+    "verdict": "indistinguishable",
     "unit": "victory levels",
     "results": {
-     "imperial marginal victory": 8,
-     "stalemate": 37,
-     "zhodani marginal victory": 25,
-     "zhodani major victory": 10
+     "imperial marginal victory": 1,
+     "stalemate": 18,
+     "zhodani marginal victory": 46,
+     "zhodani major victory": 15
     }
    }
   },
@@ -425,22 +426,22 @@
    "a": "doctrine",
    "b": "trained_imperial",
    "margin": {
-    "advantage": -35.95,
-    "stderr": 4.529392966063515,
+    "advantage": -41.1,
+    "stderr": 4.648517822781574,
     "games": 40,
     "verdict": "worse",
     "unit": "victory points"
    },
    "level": {
-    "advantage": -0.625,
-    "stderr": 0.06875728399641817,
+    "advantage": -0.4625,
+    "stderr": 0.07676867516884402,
     "games": 40,
     "verdict": "worse",
     "unit": "victory levels",
     "results": {
-     "imperial marginal victory": 9,
-     "stalemate": 40,
-     "zhodani marginal victory": 19,
+     "imperial marginal victory": 8,
+     "stalemate": 29,
+     "zhodani marginal victory": 31,
      "zhodani major victory": 12
     }
    }
@@ -449,23 +450,23 @@
    "a": "doctrine",
    "b": "trained_zhodani",
    "margin": {
-    "advantage": -14.73125,
-    "stderr": 5.069322227334862,
+    "advantage": -14.18125,
+    "stderr": 5.248557398717119,
     "games": 40,
     "verdict": "worse",
     "unit": "victory points"
    },
    "level": {
-    "advantage": -0.4875,
-    "stderr": 0.07486633388057644,
+    "advantage": -0.1625,
+    "stderr": 0.08841100842234757,
     "games": 40,
-    "verdict": "worse",
+    "verdict": "indistinguishable",
     "unit": "victory levels",
     "results": {
-     "imperial marginal victory": 5,
-     "stalemate": 42,
-     "zhodani marginal victory": 22,
-     "zhodani major victory": 11
+     "imperial marginal victory": 2,
+     "stalemate": 24,
+     "zhodani marginal victory": 41,
+     "zhodani major victory": 13
     }
    }
   },
@@ -618,10 +619,10 @@
  ],
  "results": {
   "imperial major victory": 3,
-  "imperial marginal victory": 64,
-  "stalemate": 487,
-  "zhodani marginal victory": 591,
-  "zhodani major victory": 511,
+  "imperial marginal victory": 52,
+  "stalemate": 356,
+  "zhodani marginal victory": 699,
+  "zhodani major victory": 546,
   "zhodani automatic victory": 24
  }
 }

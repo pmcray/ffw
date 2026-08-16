@@ -363,30 +363,79 @@ one function whose entire job is comparable numbers had never been reproducible
 across runs. It uses a stable CRC now, with a test that spawns two interpreters
 and compares.
 
-### The first tournament with error bars worth reading
+### The round robin, scored the way the rules score the war
 
-40 paired games per pairing, five agents, about eight minutes:
+Seven agents, 40 paired games per pairing, **sixty turns** so rule 8's
+armistice boundary is reachable, about twelve minutes. Every pairing is played
+once and scored twice — `tools/tournament.py`, data in
+`ffw/data/tournament.json`:
 
-| agent | average | stderr | record |
-|---|---|---|---|
-| `HeuristicAgent` | +18.8 | ±2.7 | 104–56 |
-| `DoctrineAgent` | +16.5 | ±3.0 | 103–57 |
-| `NeuralAgent` | +13.4 | ±2.8 | 92–68 |
-| `ScriptedAgent` | +12.2 | ±2.9 | 101–59 |
-| `RandomAgent` | −60.8 | ±1.6 | 0–160 |
+| agent | by margin (VP) | by victory level |
+|---|---|---|
+| `trained_imperial` | **+46.7 ± 2.70** | **+0.49 ± 0.04** |
+| `trained_zhodani` | +15.4 ± 2.67 | +0.05 ± 0.04 |
+| `NeuralAgent` | +4.4 ± 2.82 | +0.06 ± 0.04 |
+| `HeuristicAgent` | +2.9 ± 2.60 | −0.12 ± 0.04 |
+| `DoctrineAgent` | −1.5 ± 2.67 | −0.06 ± 0.04 |
+| `ScriptedAgent` | −2.4 ± 2.46 | −0.20 ± 0.03 |
+| `RandomAgent` | −65.5 ± 2.22 | −0.22 ± 0.04 |
 
-The head-to-head numbers say more than the ranking:
+**The two columns are not the same ranking, and the gap between them is the
+point.** `trained_zhodani` is second by margin and third by level, where its
++15.4 victory points are worth +0.05 ± 0.04 levels — nothing. That is a second,
+independent confirmation of what `tools/rebaseline.py` found: the trained
+Zhodani doctrine wins points that do not convert into victories.
 
-- **`ScriptedAgent`'s historical opening costs about 9 VP** (`heuristic` beats it
-  +9.4). It has been the "stock" baseline every training run was measured
-  against, and scripting the drive on Jewell–Efate–Regina is worse than letting
-  the doctrine choose.
-- **The value network makes play worse, not better** (`neural` loses to
-  `heuristic` by 4.9). That is consistent with everything else measured about it:
-  it predicts adequately and steers badly.
-- **`DoctrineAgent` is level with `HeuristicAgent`** (+0.1 over 40 paired games),
-  which is what makes the rule-based architecture a fair comparison rather than a
-  handicapped one.
+Read the bottom of the level column and the reason becomes plain. `RandomAgent`
+is 65 victory points behind the field and **a fifth of a victory level** behind
+it. The victory table has nine steps, three-quarters of all games land in a
+Zhodani win regardless, and so the level is a coarse instrument for *ranking
+play* and the right one for asking *who won*. Margin stays the sharper tool for
+comparing agents; it is simply not the thing the rules settle on.
+
+Three head-to-head numbers, all of which correct something published earlier
+in this file:
+
+- **The scripted opening is no longer worth nine victory points.** `heuristic`
+  beats `scripted` by +2.2 ± 3.9 — indistinguishable. The earlier +9.4 was a
+  40-game reading; `tools/rebaseline.py` puts the opening's cost at +2.7 ± 2.2
+  over 120 games. It is a real handicap and a small one.
+- **The value network does not make play worse.** It was reported as losing to
+  `heuristic` by 4.9; over 40 paired games at sixty turns it *wins* by 0.8
+  ± 6.3, and it finishes above `heuristic` on both measures. The honest
+  statement is that nothing separates them.
+- **`DoctrineAgent` is still level with `HeuristicAgent`** (+3.6 ± 4.7 by
+  margin, −0.09 ± 0.10 by level), which is what makes the rule-based
+  architecture a fair comparison rather than a handicapped one.
+
+#### What the second column found on its first run
+
+The tournament's whole justification is that the two measures can disagree. On
+the first run long enough for an armistice to fire, they did:
+
+```
+doctrine vs random    margin +47.8 ± 4.6    level −0.53 ± 0.07
+```
+
+`DoctrineAgent` outplayed a random player by forty-eight victory points and
+lost to it by half a victory level. It overrides `declare_armistice` outright,
+so the turn-52 fix applied to `HeuristicAgent` and `NeuralAgent` had never
+reached it: it went on declaring at turn 40 and paying two levels where one
+would do, while `RandomAgent` never declares an armistice and so never pays for
+one at all. Ranked by margin it sat mid-field; ranked by level it came last,
+below random.
+
+No test caught it and no margin-scored comparison could, because the mistake
+does not cost victory points — it costs the level those points are converted
+into. Fixing it moved the doctrine from **−0.45 ± 0.03 levels to −0.06 ± 0.04**
+and moved the whole tournament's outcome distribution: stalemates fell from
+29.0% of games to 21.2%, and Zhodani marginal victories rose from 35.2% to
+41.6%. The boundary now lives in the rule set's posture (`armistice_turn`,
+`armistice_slide`) rather than in a method body, so a proposal loop can reach
+it.
+
+The before-and-after tables are both in the git history; the committed
+`tournament.json` is the run with the fix.
 
 ### A behaviour that turned out to be side-specific
 
