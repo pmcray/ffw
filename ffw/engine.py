@@ -37,6 +37,7 @@ def new_game(seed: int | None = None, options: dict | None = None) -> GameState:
     _deploy_imperial(state, rng)
     _deploy_zhodani(state, rng)
     _choose_secret_base(state, rng)
+    _build_special_group(state, rng)
     for world in state.world_map:
         state.update_control(world.hex)
     state.note("game set up; %d squadrons, %d troop units in play"
@@ -48,6 +49,7 @@ def _build_pools(state: GameState, rng: random.Random) -> None:
     """Fill the off-map reinforcement and replacement pools."""
     p = state.pools
     p["imperial_battle"] = oob.expand(oob.IMPERIAL_BATTLE)
+    p["imperial_black_globes"] = oob.expand(oob.IMPERIAL_BLACK_GLOBES)
     p["imperial_cruiser"] = oob.expand(oob.IMPERIAL_CRUISER)
     p["imperial_scout"] = oob.expand(oob.IMPERIAL_SCOUT)
     p["imperial_tanker"] = oob.expand(oob.IMPERIAL_TANKER)
@@ -86,14 +88,15 @@ def _build_pools(state: GameState, rng: random.Random) -> None:
         oob.ZHODANI_REPLACEMENTS["troop"]["initial"]
 
     # fleet markers and admirals
-    for name in oob.IMPERIAL_FLEETS:
-        _add_fleet(state, name, "imperial")
-    for name in oob.ZHODANI_FLEETS:
-        _add_fleet(state, name, "zhodani")
-    for name in oob.SWORD_WORLDS_FLEETS:
-        _add_fleet(state, name, "sword_worlds")
-    for name in oob.VARGR_FLEETS:
-        _add_fleet(state, name, "vargr")
+    # Every marker in the counter mix exists from the start, but only the
+    # opening allotment is available; the rest arrive as reinforcements.
+    for navy, names in (("imperial", oob.IMPERIAL_FLEETS),
+                        ("zhodani", oob.ZHODANI_FLEETS),
+                        ("sword_worlds", oob.SWORD_WORLDS_FLEETS),
+                        ("vargr", oob.VARGR_FLEETS)):
+        opening = oob.INITIAL_FLEETS.get(navy, len(names))
+        for i, name in enumerate(names):
+            _add_fleet(state, name, navy).available = i < opening
     p["imperial_admirals"] = [
         _make_admiral(state, "imperial", *a) for a in oob.IMPERIAL_ADMIRALS]
     p["zhodani_admirals"] = [
@@ -111,6 +114,27 @@ def _build_pools(state: GameState, rng: random.Random) -> None:
     for key in ("imperial_admirals", "zhodani_admirals"):
         rng.shuffle(p[key])
     p["imperial_warrant"] = 1
+
+
+def _build_special_group(state: GameState, rng: random.Random) -> None:
+    """Rule 6's Imperial special group: tankers, assault carriers, the warrant.
+
+    Built after deployment so that the squadrons already on the map are not
+    also sitting in the draw pile.  Entries are drawn one at a time, one per
+    fleet marker that arrives as a reinforcement, so the warrant reaches play
+    on a die roll rather than at a fixed turn -- which is the point of it being
+    in the group at all.
+    """
+    p = state.pools
+    group: list = [("squadron", "imperial_tanker", cls)
+                   for cls in p["imperial_tanker"]]
+    group += [("squadron", "imperial_assault", cls)
+              for cls in p["imperial_assault"]]
+    if p.get("imperial_warrant"):
+        group.append(("warrant", None, None))
+    rng.shuffle(group)
+    p["imperial_special"] = group
+    p["imperial_tanker"], p["imperial_assault"] = [], []
 
 
 def _add_fleet(state: GameState, name: str, navy: str) -> Fleet:
@@ -246,7 +270,7 @@ def _deploy_imperial(state: GameState, rng: random.Random) -> None:
         adm.precedence = 15
         adm.location = rng.choice(naval).hex
         break
-    _organise_new_fleets(state, IMPERIAL, limit=4)
+    _organise_new_fleets(state, IMPERIAL)
 
 
 def _deploy_zhodani(state: GameState, rng: random.Random) -> None:
@@ -335,7 +359,7 @@ def _deploy_zhodani(state: GameState, rng: random.Random) -> None:
             if adm.navy == "vargr":
                 adm.location = vargr[0].hex
 
-    _organise_new_fleets(state, ZHODANI, limit=11)
+    _organise_new_fleets(state, ZHODANI)
 
 
 def _choose_secret_base(state: GameState, rng: random.Random) -> None:
@@ -448,7 +472,8 @@ def reorganise_fleets(state: GameState, side: str,
             del loose[hex_id]
 
     # 3. spend spare markers on the biggest remaining concentrations
-    spare = [f for f in state.fleets.values() if not f.active and f.side == side]
+    spare = [f for f in state.fleets.values()
+             if f.available and not f.active and f.side == side]
     if reserve > 0:
         spare = spare[:max(0, len(spare) - reserve)]
     order = sorted(loose.items(), key=lambda kv: (
@@ -499,8 +524,13 @@ def reorganise_fleets(state: GameState, side: str,
             adm.aboard = True
 
 
-# kept for backwards compatibility with the deployment code
-def _organise_new_fleets(state: GameState, side: str, limit: int = 99) -> None:
+def _organise_new_fleets(state: GameState, side: str) -> None:
+    """Form the opening fleets out of the deployed squadrons.
+
+    There is no cap to apply here: how many markers a side may spend is now
+    carried by ``Fleet.available``, set from ``oob.INITIAL_FLEETS``, so the
+    reorganiser runs into the order of battle rather than a separate limit.
+    """
     reorganise_fleets(state, side)
 
 
@@ -693,16 +723,69 @@ class Engine:
                         s.replacement_points[side][kind] += amount
             self.agents[side].spend_replacements(s, side, self)
 
+    # -- reinforcement helpers --------------------------------------------
+    def _release_fleet_markers(self, navy: str, count: int) -> int:
+        """Hand ``count`` more fleet markers to ``navy``; return how many.
+
+        Rule 3 caps a player at the markers his order of battle has released,
+        so this is what actually puts a new fleet within reach of the fleet
+        adjustment step.  Markers already in play or already released are
+        skipped, and running out is normal rather than an error -- the counter
+        mix is finite and the table keeps rolling.
+        """
+        released = 0
+        for fleet in self.state.fleets.values():
+            if released >= count:
+                break
+            if fleet.navy == navy and not fleet.available:
+                fleet.available = True
+                released += 1
+        return released
+
+    def _draw_special(self, count: int = 1) -> None:
+        """Draw from the Imperial special group: tanker, carrier, or warrant."""
+        p = self.state.pools
+        for _ in range(count):
+            if not p.get("imperial_special"):
+                return
+            entry = p["imperial_special"].pop()
+            kind, _key, cls = entry
+            if kind == "warrant":
+                held = [a for a in self.state.admirals.values()
+                        if a.side == IMPERIAL and a.location]
+                if not held:
+                    # nobody to carry it; it stays in the group rather than
+                    # being lost, and will come up again on a later draw
+                    p["imperial_special"].insert(0, entry)
+                    continue
+                # rule 5: the warrant sets its holder's precedence to 0, so it
+                # belongs with the admiral who is already senior
+                holder = min(held, key=lambda a: a.precedence)
+                holder.warrant = True
+                p["imperial_warrant"] = 0
+                self.state.note("the Emperor's warrant reaches %s" % holder.name)
+                continue
+            _place_squadron(self.state, cls, "imperial",
+                            "imperial_reinforcements")
+
+    def _draw_admirals(self, key: str, box: str, count: int) -> None:
+        p = self.state.pools
+        for _ in range(count):
+            if not p[key]:
+                return
+            adm = p[key].pop()
+            if not adm.location:
+                adm.location = box
+
     def _release_reinforcements(self) -> None:
         s, p = self.state, self.state.pools
         if s.turn == 2:
-            # three fleets, three admirals, three special counters
-            for adm in p["imperial_admirals"][:3]:
-                if not adm.location:
-                    adm.location = "imperial_reinforcements"
-            for cls in p["imperial_tanker"][:2]:
-                _place_squadron(s, cls, "imperial", "imperial_reinforcements")
-            p["imperial_tanker"] = p["imperial_tanker"][2:]
+            # rule 6: three fleet markers, three admirals, three special
+            # counters, all drawn at random
+            n = oob.TURN_2_IMPERIAL_DRAW
+            self._release_fleet_markers("imperial", n)
+            self._draw_admirals("imperial_admirals", "imperial_reinforcements", n)
+            self._draw_special(n)
         if s.turn == 6:
             for cls in p["imperial_colonial_sq"][:14]:
                 _place_squadron(s, cls, "imperial", "imperial_rimward",
@@ -713,6 +796,15 @@ class Engine:
         if s.turn >= 10:
             die = self.d6()
             battle, cruiser, fleets = oob.IMPERIAL_REINFORCEMENT_TABLE[die]
+            if die == 6 and p.get("imperial_black_globes"):
+                # rule 9: the first 6 brings the black globe squadrons and one
+                # fleet *instead of* the units a 6 usually gives, not as well
+                for cls in p["imperial_black_globes"]:
+                    _place_squadron(s, cls, "imperial",
+                                    "imperial_reinforcements")
+                p["imperial_black_globes"] = []
+                battle, cruiser, fleets = 0, 0, 1
+                s.note("black globe squadrons join the Imperial order of battle")
             for _ in range(battle):
                 if p["imperial_battle"]:
                     _place_squadron(s, p["imperial_battle"].pop(), "imperial",
@@ -721,15 +813,14 @@ class Engine:
                 if p["imperial_cruiser"]:
                     _place_squadron(s, p["imperial_cruiser"].pop(), "imperial",
                                     "imperial_reinforcements")
+            # "whenever a fleet appears as a reinforcement, an admiral is
+            # selected at random from the admirals group and one counter is
+            # selected at random from the special group"
             for _ in range(fleets):
-                if p["imperial_admirals"]:
-                    adm = p["imperial_admirals"].pop()
-                    adm.location = "imperial_reinforcements"
-                for key in ("imperial_assault", "imperial_tanker"):
-                    if p[key]:
-                        _place_squadron(s, p[key].pop(), "imperial",
-                                        "imperial_reinforcements")
-                        break
+                self._release_fleet_markers("imperial", 1)
+                self._draw_admirals("imperial_admirals",
+                                    "imperial_reinforcements", 1)
+                self._draw_special(1)
             if s.turn == 10:
                 for key in ("imperial_troops_5c", "imperial_troops_1c",
                             "imperial_troops_20"):
@@ -759,6 +850,9 @@ class Engine:
             for adm in p["zhodani_admirals"][:4 if s.turn == 10 else 3]:
                 if not adm.location:
                     adm.location = "zhodani_reinforcements"
+            # the two Zhodani groups bring the markers the opening deployment
+            # did not, so the reinforcing squadrons have something to fly in
+            self._release_fleet_markers("zhodani", 2 if s.turn == 10 else 1)
             s.note("Zhodani turn %d reinforcements arrive" % s.turn)
 
     # ---- phase 2 ---------------------------------------------------------

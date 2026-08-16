@@ -249,6 +249,63 @@ def paired_series(agent_a, agent_b, games: int = 20, seed: int = 0,
     return out
 
 
+def level_index(result: str) -> int:
+    """Where a result sits on rule 8's victory table, Zhodani-positive."""
+    return VICTORY_ORDER.index(result)
+
+
+def play_paired_outcome(agent_a, agent_b, seed: int = 0,
+                        max_turns: int = 60):
+    """A paired matchup scored by **victory level** rather than raw margin.
+
+    Rule 8 does not settle the game on the victory-point margin.  A unilateral
+    Zhodani armistice shifts the result two levels towards the Imperium through
+    turn 51 and one from turn 52, so two positions with the same margin can end
+    a level apart, and a Zhodani doctrine that maximises margin is optimising a
+    quantity that does not decide the game.  Measured over sixty games, simply
+    waiting for the turn-52 boundary is worth +0.90 +/- 0.08 levels while moving
+    the margin by six points.
+
+    The margin remains the right measure for *comparing play* -- it is
+    continuous, so it resolves differences the nine-step table rounds away.  Use
+    this when the question is who actually won.
+
+    ``max_turns`` defaults to the engine's own limit, because a game truncated
+    before turn 52 cannot reach the boundary that decides it.
+    """
+    first = play_match(agent_a(IMPERIAL, seed), agent_b(ZHODANI, seed + 1),
+                       seed=seed, max_turns=max_turns)[1]
+    second = play_match(agent_b(IMPERIAL, seed), agent_a(ZHODANI, seed + 1),
+                        seed=seed, max_turns=max_turns)[1]
+    return (level_index(second) - level_index(first)) / 2.0, first, second
+
+
+def _run_paired_outcome(job):
+    agent_a, agent_b, seed, max_turns = job
+    return play_paired_outcome(agent_a, agent_b, seed=seed, max_turns=max_turns)
+
+
+def outcome_series(agent_a, agent_b, games: int = 20, seed: int = 0,
+                   max_turns: int = 60, workers: int | None = None) -> dict:
+    """Paired games scored by victory level, plus the distribution of results."""
+    jobs = [(agent_a, agent_b, seed + g, max_turns) for g in range(games)]
+    if workers is None:
+        workers = default_workers(games)
+    if workers > 1 and _picklable(jobs[0]):
+        rows = list(_pool(workers).map(_run_paired_outcome, jobs))
+    else:
+        rows = [_run_paired_outcome(j) for j in jobs]
+    stats = summarise([r[0] for r in rows])
+    stats["unit"] = "victory levels"
+    results: dict[str, int] = {}
+    for _, first, second in rows:
+        for r in (first, second):
+            results[r] = results.get(r, 0) + 1
+    stats["results"] = dict(sorted(results.items(),
+                                   key=lambda kv: level_index(kv[0])))
+    return stats
+
+
 def summarise(advantages) -> dict:
     """Mean, standard error and a verdict -- the one place that decides.
 

@@ -91,6 +91,7 @@ class HeuristicAgent(Agent):
         self._front_cache = None
         self._intent_turn = -1
         self._picket_orders: dict[int, str] = {}
+        self._margin_log: list[float] = []
 
     @property
     def pickets(self) -> bool:
@@ -120,6 +121,7 @@ class HeuristicAgent(Agent):
         self._front_cache = None
         self._intent_turn = -1
         self._picket_orders = {}
+        self._margin_log = []
 
     # -- free worlds ---------------------------------------------------
     def claimable(self, state: GameState, side: str, world, carrying: int = 0,
@@ -331,7 +333,7 @@ class HeuristicAgent(Agent):
         if not targets:
             return 0
         spare = [f for f in state.fleets.values()
-                 if not f.active and f.side == side]
+                 if f.available and not f.active and f.side == side]
         if not spare:
             return 0
         claimed = set(self._picket_orders.values())
@@ -664,12 +666,34 @@ class HeuristicAgent(Agent):
             unit.overt = worth > (imperial + defence) * 0.6 and unit.losses < 60
 
     def declare_armistice(self, state, engine):
+        """Rule 8: the Zhodani may end the war unilaterally from turn 26.
+
+        The price is a shift in the victory table towards the Imperium -- **two
+        levels through turn 51, but only one from turn 52**.  A level is fifty
+        to a hundred victory points, so waiting out the turn-51 boundary is
+        worth more than almost anything a fleet can do in the same time, and
+        there is no reason to cash out early unless the position is sliding
+        faster than that.
+
+        The previous rule declared at turn 40 whenever ahead, which paid two
+        levels for nothing.  Every measurement in this project ran to turn 40 or
+        less, so the armistice never fired in any of them and the cost never
+        showed up.
+        """
         if self.side != ZHODANI:
             return False
         margin = state.victory_margin()
-        # call it off when ahead and the tide is not going to turn
+        self._margin_log.append(margin)
         threshold = 60 + 120 * self.w["armistice"]
-        return state.turn >= 40 and margin > threshold
+        if margin <= threshold:
+            return False
+        if state.turn >= 52:
+            return True
+        # Before turn 52 the shift costs two levels rather than one.  Take that
+        # only when the margin is falling fast enough that waiting would cost
+        # more than the level being saved.
+        window = self._margin_log[-6:]
+        return len(window) >= 5 and window[-1] < window[0] - 40
 
 
 class ScriptedAgent(HeuristicAgent):

@@ -1,0 +1,66 @@
+{
+ "games": 120,
+ "max_turns": 40,
+ "scripted_opening_cost": {
+  "advantage": 5.225,
+  "stderr": 2.1006355747552155,
+  "games": 120,
+  "verdict": "better"
+ },
+ "trained": {
+  "imperial": {
+   "previous": {
+    "advantage": 39.975,
+    "stderr": 9.259863359923,
+    "games": 10,
+    "verdict": "better"
+   },
+   "scripted": {
+    "advantage": 20.041666666666668,
+    "stderr": 2.1898838218334595,
+    "games": 120,
+    "verdict": "better"
+   },
+   "heuristic": {
+    "advantage": 14.535416666666666,
+    "stderr": 2.0416258552915285,
+    "games": 120,
+    "verdict": "better"
+   }
+  },
+  "zhodani": {
+   "previous": {
+    "advantage": 25.375,
+    "stderr": 6.74343816857049,
+    "games": 10,
+    "verdict": "better"
+   },
+   "scripted": {
+    "advantage": 11.1375,
+    "stderr": 1.908594582621549,
+    "games": 120,
+    "verdict": "better"
+   },
+   "heuristic": {
+    "advantage": 2.44375,
+    "stderr": 2.0028963239141313,
+    "games": 120,
+    "verdict": "indistinguishable"
+   }
+  }
+ },
+ "seat_bias": {
+  "heuristic": {
+   "advantage": 173.41666666666666,
+   "stderr": 3.3432921959873285,
+   "games": 120,
+   "verdict": "better"
+  },
+  "scripted": {
+   "advantage": 166.82916666666668,
+   "stderr": 3.2263929082872305,
+   "games": 120,
+   "verdict": "better"
+  }
+ }
+}

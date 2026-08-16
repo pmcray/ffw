@@ -299,7 +299,11 @@ class TestSetup(unittest.TestCase):
         self.assertEqual(sum(c for _, c in oob.ZHODANI_CRUISER), 28)  # 14+7+7
         self.assertEqual(sum(c for _, c in oob.ZHODANI_ASSAULT), 8)   # 6+1+1
         self.assertEqual(sum(c for _, c in oob.ZHODANI_SCOUT), 6)
-        self.assertEqual(sum(c for _, c in oob.IMPERIAL_BATTLE), 34)  # 2+32
+        # 34 battle squadrons, of which the four black globes are a group of
+        # their own because rule 9 keeps them out of the random draws
+        self.assertEqual(sum(c for _, c in oob.IMPERIAL_BLACK_GLOBES), 4)
+        self.assertEqual(sum(c for _, c in oob.IMPERIAL_BATTLE)
+                         + sum(c for _, c in oob.IMPERIAL_BLACK_GLOBES), 34)
         self.assertEqual(sum(c for _, c in oob.IMPERIAL_CRUISER), 32)  # 6+26
         self.assertEqual(len(oob.IMPERIAL_FLEETS), 14)
         self.assertEqual(len(oob.ZHODANI_FLEETS), 14)
@@ -1345,3 +1349,356 @@ class TestPicketDefault(unittest.TestCase):
             [{"action": "posture", "posture": {"pickets": False}}])
         self.assertTrue(DoctrineAgent(ZHODANI, default_rules(), seed=1).pickets)
         self.assertFalse(DoctrineAgent(IMPERIAL, off, seed=1).pickets)
+
+
+class TestArmistice(unittest.TestCase):
+    """Rule 8's unilateral armistice -- the Zhodani player's exit, and its price.
+
+    The rulebook: "The Zhodani player may unilaterally declare an armistice at
+    the end of any turn starting from turn 26.  If the Zhodani player
+    unilaterally declares an armistice on or between turns 26 to 51, the level
+    of victory is shifted two levels in favor of the Imperial player.  If the
+    Zhodani player unilaterally declares an armistice on or after turn 52, the
+    level of victory is shifted one level in favor of the Imperial player."
+    """
+
+    def test_the_rulebooks_worked_example(self):
+        """Turn 34, margin 127: a Zhodani major victory becomes a stalemate."""
+        from ffw.training import VICTORY_ORDER
+        state = new_game(seed=1)
+        self.assertEqual(state.victory_level(127.0), "zhodani major victory")
+        shifted = VICTORY_ORDER[VICTORY_ORDER.index("zhodani major victory") - 2]
+        self.assertEqual(shifted, "stalemate")
+
+    def test_the_shift_is_two_levels_before_52_and_one_after(self):
+        from ffw.engine import Engine
+        from ffw.training import VICTORY_ORDER
+
+        class Always(ScriptedAgent):
+            def declare_armistice(self, state, engine):
+                return self.side == ZHODANI
+
+        for turn, expected_shift in ((26, 2), (51, 2), (52, 1), (55, 1)):
+            state = new_game(seed=2)
+            state.turn = turn
+            # a fixed, known margin: hand Regina to the Zhodani and nothing else
+            for world in state.world_map:
+                world.control = world.original_control
+            engine = Engine(state, ScriptedAgent(IMPERIAL, seed=1),
+                            Always(ZHODANI, seed=2))
+            unshifted = state.victory_level()
+            engine.check_victory()
+            self.assertTrue(state.game_over, "armistice did not end the game")
+            moved = (VICTORY_ORDER.index(unshifted)
+                     - VICTORY_ORDER.index(state.result))
+            self.assertEqual(moved, expected_shift,
+                             "turn %d shifted %d levels" % (turn, moved))
+
+    def test_it_cannot_be_declared_before_turn_26(self):
+        from ffw.engine import Engine
+
+        class Always(ScriptedAgent):
+            def declare_armistice(self, state, engine):
+                return self.side == ZHODANI
+
+        state = new_game(seed=3)
+        state.turn = 25
+        engine = Engine(state, ScriptedAgent(IMPERIAL, seed=1),
+                        Always(ZHODANI, seed=2))
+        engine.check_victory()
+        self.assertFalse(state.game_over)
+
+    def test_the_shift_never_runs_off_the_end_of_the_table(self):
+        from ffw.engine import Engine
+        from ffw.training import VICTORY_ORDER
+
+        class Always(ScriptedAgent):
+            def declare_armistice(self, state, engine):
+                return self.side == ZHODANI
+
+        state = new_game(seed=4)
+        state.turn = 30
+        for world in state.world_map:          # an Imperial rout: already the
+            world.control = IMPERIAL           # bottom of the victory table
+        engine = Engine(state, ScriptedAgent(IMPERIAL, seed=1),
+                        Always(ZHODANI, seed=2))
+        engine.check_victory()
+        self.assertIn(state.result, VICTORY_ORDER)
+
+    def test_the_doctrine_waits_for_the_cheaper_boundary(self):
+        """Declaring at 40 pays two levels; waiting to 52 pays one.
+
+        Measured at +0.90 +/- 0.08 victory levels over 60 games -- the largest
+        effect in the project, and it comes from the rulebook rather than from
+        training.
+        """
+        agent = ScriptedAgent(ZHODANI, seed=1)
+        state = new_game(seed=5)
+        winning = 200.0
+
+        class Stub:
+            pass
+        for turn, expected in ((26, False), (40, False), (51, False),
+                               (52, True), (58, True)):
+            agent._margin_log = []
+            state.turn = turn
+            original = state.victory_margin
+            state.victory_margin = lambda m=winning: m
+            try:
+                self.assertEqual(agent.declare_armistice(state, Stub()), expected,
+                                 "turn %d" % turn)
+            finally:
+                state.victory_margin = original
+
+    def test_a_collapsing_position_is_cashed_in_early(self):
+        """Two levels is still better than watching the lead evaporate."""
+        agent = ScriptedAgent(ZHODANI, seed=1)
+        state = new_game(seed=6)
+
+        class Stub:
+            pass
+        state.turn = 40
+        for margin in (260.0, 240.0, 220.0, 200.0, 150.0):
+            state.victory_margin = lambda m=margin: m
+            declared = agent.declare_armistice(state, Stub())
+        self.assertTrue(declared, "a sliding margin should be cashed in")
+
+
+class TestVictoryLevelScoring(unittest.TestCase):
+    """Scoring a matchup by who won, not by how far ahead they finished.
+
+    Margin is the better measure for *comparing play* -- it is continuous, so
+    it resolves differences the nine-step victory table rounds away.  But rule
+    8's armistice shifts the table without touching the margin, so a doctrine
+    tuned on margin alone can optimise a quantity that does not decide the
+    game.  Both measures are kept, and this is the second one.
+    """
+
+    def test_the_ladder_runs_zhodani_positive(self):
+        from ffw.training import VICTORY_ORDER, level_index
+        self.assertLess(level_index("imperial automatic victory"),
+                        level_index("stalemate"))
+        self.assertLess(level_index("stalemate"),
+                        level_index("zhodani automatic victory"))
+        self.assertEqual(len(set(VICTORY_ORDER)), len(VICTORY_ORDER))
+
+    def test_an_unknown_result_is_an_error_not_a_silent_zero(self):
+        from ffw.training import level_index
+        with self.assertRaises(ValueError):
+            level_index("nobody won")
+
+    def test_a_paired_outcome_is_antisymmetric(self):
+        """Swap the agents and the advantage must flip sign, as with margins."""
+        from ffw.training import AgentSpec, play_paired_outcome
+        a, b = AgentSpec("heuristic"), AgentSpec("scripted")
+        forward = play_paired_outcome(a, b, seed=808, max_turns=12)
+        reverse = play_paired_outcome(b, a, seed=808, max_turns=12)
+        self.assertAlmostEqual(forward[0], -reverse[0], places=9)
+        self.assertEqual(forward[1], reverse[2])
+        self.assertEqual(forward[2], reverse[1])
+
+    def test_a_mirror_match_scores_dead_level(self):
+        from ffw.training import AgentSpec, outcome_series
+        spec = AgentSpec("scripted")
+        stats = outcome_series(spec, spec, games=3, seed=909, max_turns=12)
+        self.assertEqual(stats["advantage"], 0.0)
+        self.assertEqual(stats["unit"], "victory levels")
+
+    def test_the_distribution_counts_every_game_played(self):
+        from ffw.training import AgentSpec, outcome_series
+        games = 3
+        stats = outcome_series(AgentSpec("heuristic"), AgentSpec("scripted"),
+                               games=games, seed=910, max_turns=12)
+        self.assertEqual(sum(stats["results"].values()), 2 * games)
+        self.assertEqual(stats["games"], games)
+
+    def test_the_results_are_reported_in_table_order(self):
+        from ffw.training import AgentSpec, level_index, outcome_series
+        stats = outcome_series(AgentSpec("heuristic"), AgentSpec("scripted"),
+                               games=2, seed=911, max_turns=12)
+        order = [level_index(name) for name in stats["results"]]
+        self.assertEqual(order, sorted(order))
+
+    def test_parallel_and_serial_agree(self):
+        from ffw.training import AgentSpec, outcome_series
+        a, b = AgentSpec("heuristic"), AgentSpec("scripted")
+        kw = dict(games=4, seed=912, max_turns=10)
+        self.assertEqual(outcome_series(a, b, **kw)["results"],
+                         outcome_series(a, b, workers=1, **kw)["results"])
+
+    def test_it_runs_long_enough_to_reach_the_armistice_boundary(self):
+        """A game cut off at turn 40 cannot reach the turn-52 boundary."""
+        import inspect
+        from ffw.training import outcome_series, play_paired_outcome
+        for fn in (outcome_series, play_paired_outcome):
+            default = inspect.signature(fn).parameters["max_turns"].default
+            self.assertGreaterEqual(default, 52, fn.__name__)
+
+
+class TestReinforcementSchedule(unittest.TestCase):
+    """Rule 6, audited line by line against the rules booklet.
+
+    Three things were missing.  Fleet markers arrived as nothing at all -- the
+    table's third column spawned an admiral and a special counter but no
+    marker, and all fourteen were spendable from turn 1, so rule 3's "a player
+    may have only a limited number of fleets in play" had no force and the
+    Imperium opened with ten markers it should have had to wait for.  The four
+    black globe squadrons sat in the ordinary battle pool despite rule 9 saying
+    they are set aside from the random draws.  And the warrant, which is the
+    only way the Imperial navy may land troops on an interdicted world, was a
+    counter in a pool that nothing ever drew from, so no Imperial admiral could
+    ever hold it.
+
+    Restricting the opening markers turned out to cost the Imperium nothing
+    measurable: seat bias over 120 paired games moved from +173.4 +/- 3.3 to
+    +171.2 +/- 3.5, which is a difference of 2 +/- 5.  Correctness, not balance.
+    """
+
+    def _engine(self, seed=77):
+        state = new_game(seed=seed)
+        return state, Engine(state, ScriptedAgent(IMPERIAL, seed=1),
+                             ScriptedAgent(ZHODANI, seed=2),
+                             rng=random.Random(seed))
+
+    def _markers(self, state, side, attr="available"):
+        return sum(1 for f in state.fleets.values()
+                   if f.side == side and getattr(f, attr))
+
+    def test_the_opening_allotment_is_smaller_than_the_counter_mix(self):
+        state = new_game(seed=70)
+        owned = sum(1 for f in state.fleets.values() if f.navy == "imperial"
+                    and f.available)
+        self.assertEqual(owned, oob.INITIAL_FLEETS["imperial"])
+        self.assertLess(owned, len(oob.IMPERIAL_FLEETS))
+
+    def test_turn_two_brings_three_of_each(self):
+        """"three fleet markers ... three admirals ... three special counters"."""
+        state, engine = self._engine(seed=71)
+        markers = self._markers(state, IMPERIAL)
+        special = len(state.pools["imperial_special"])
+        boxed = sum(1 for a in state.admirals.values()
+                    if a.location == "imperial_reinforcements")
+        engine.play_turn()                       # turn 1
+        engine.play_turn()                       # turn 2
+        n = oob.TURN_2_IMPERIAL_DRAW
+        self.assertEqual(self._markers(state, IMPERIAL) - markers, n)
+        self.assertEqual(special - len(state.pools["imperial_special"]), n)
+        # counting admirals *in the box* rather than squadrons on the map,
+        # because turns 1 and 2 are fought and the map count moves for reasons
+        # that have nothing to do with the draw
+        self.assertGreaterEqual(
+            sum(1 for a in state.admirals.values()
+                if a.location == "imperial_reinforcements") - boxed, 1)
+
+    def test_a_marker_cannot_be_spent_before_it_is_released(self):
+        from ffw.engine import reorganise_fleets
+        state = new_game(seed=72)
+        for _ in range(3):
+            reorganise_fleets(state, IMPERIAL)
+        in_play = self._markers(state, IMPERIAL, "active")
+        self.assertLessEqual(in_play, oob.INITIAL_FLEETS["imperial"])
+
+    def test_pickets_respect_the_order_of_battle_too(self):
+        """The doctrine may not reach round the counter mix for a marker."""
+        agent = ScriptedAgent(IMPERIAL, seed=1, pickets=True)
+        state = new_game(seed=73)
+        for fleet in state.fleets.values():
+            fleet.available = fleet.active
+        engine = Engine(state, agent, ScriptedAgent(ZHODANI, seed=2),
+                        rng=random.Random(73))
+        agent.begin_game(state, IMPERIAL, engine)
+        self.assertEqual(agent.detach_pickets(state, IMPERIAL, limit=4), 0)
+
+    def test_the_table_matches_the_rulebooks_worked_example(self):
+        """"if the Imperial player rolled a 4, he would select at random three
+        battle squadrons and two cruiser squadrons"."""
+        self.assertEqual(oob.IMPERIAL_REINFORCEMENT_TABLE[4][:2], (3, 2))
+
+    def test_every_fleet_on_the_table_comes_with_an_admiral(self):
+        """"whenever a fleet appears as a reinforcement, an admiral is selected
+        at random ... and one counter ... from the special group"."""
+        for die, (_b, _c, fleets) in oob.IMPERIAL_REINFORCEMENT_TABLE.items():
+            self.assertIn(fleets, (0, 1), "die %d" % die)
+
+    def test_black_globes_are_out_of_the_random_draws(self):
+        state = new_game(seed=74)
+        self.assertNotIn(
+            "battle-4-6-2-8",
+            [cls.name for cls in state.pools["imperial_battle"]])
+        self.assertEqual(len(state.pools["imperial_black_globes"]), 4)
+        self.assertFalse([s for s in state.squadrons.values()
+                          if getattr(s, "black_globe", False)],
+                         "black globes deployed as initial forces")
+
+    def test_black_globes_arrive_on_a_six_and_only_once(self):
+        state, engine = self._engine(seed=75)
+        state.turn = 12
+        engine.d6 = lambda: 6
+        engine._release_reinforcements()
+        globes = [s for s in state.squadrons.values()
+                  if getattr(s, "black_globe", False)]
+        self.assertEqual(len(globes), 4)
+        engine._release_reinforcements()
+        self.assertEqual(
+            sum(1 for s in state.squadrons.values()
+                if getattr(s, "black_globe", False)), 4,
+            "the black globe group is drawn once, not on every 6")
+
+    def test_black_globes_replace_the_usual_six_rather_than_adding_to_it(self):
+        state, engine = self._engine(seed=76)
+        state.turn = 12
+        engine.d6 = lambda: 6
+        pool = len(state.pools["imperial_battle"])
+        engine._release_reinforcements()
+        self.assertEqual(len(state.pools["imperial_battle"]), pool,
+                         "a 6 normally draws a battle squadron; the black "
+                         "globe turn should not draw one as well")
+
+    def test_the_warrant_reaches_an_admiral(self):
+        """Without it the Imperial navy can never land on an interdicted world."""
+        state, engine = self._engine(seed=78)
+        # the warrant is one counter in a group of nine, drawn one at a time as
+        # fleets arrive, so it reaches play some way into the war rather than
+        # on a fixed turn -- run until the group is empty
+        for _ in range(60):
+            if not state.pools["imperial_special"] or state.game_over:
+                break
+            engine.play_turn()
+        self.assertEqual(sum(1 for a in state.admirals.values() if a.warrant), 1)
+
+    def test_the_warrant_makes_its_holder_the_senior_admiral(self):
+        state, engine = self._engine(seed=79)
+        holder = None
+        for _ in range(60):
+            if holder is not None or state.game_over:
+                break
+            engine.play_turn()
+            holder = next((a for a in state.admirals.values() if a.warrant), None)
+        self.assertIsNotNone(holder, "the warrant never entered play")
+        self.assertEqual(holder.effective_precedence, 0)
+
+    def test_the_special_group_is_not_also_sitting_on_the_map(self):
+        """Built after deployment, so nothing is drawn and deployed at once."""
+        state = new_game(seed=80)
+        self.assertEqual(state.pools["imperial_tanker"], [])
+        self.assertEqual(state.pools["imperial_assault"], [])
+        self.assertTrue(state.pools["imperial_special"])
+
+    def test_markers_never_exceed_the_counter_mix(self):
+        state, engine = self._engine(seed=81)
+        for _ in range(30):
+            engine.play_turn()
+            self.assertLessEqual(
+                sum(1 for f in state.fleets.values()
+                    if f.navy == "imperial" and f.available),
+                len(oob.IMPERIAL_FLEETS))
+
+    def test_a_disbanded_fleet_keeps_its_marker(self):
+        """Rule 3: "the fleet marker may be brought back into play"."""
+        from ffw.engine import _release_marker
+        state = new_game(seed=82)
+        fleet = next(f for f in state.fleets.values()
+                     if f.active and f.side == IMPERIAL)
+        _release_marker(state, fleet)
+        self.assertFalse(fleet.active)
+        self.assertTrue(fleet.available)

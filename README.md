@@ -23,7 +23,7 @@ ffw/                      the game
   viz.py                  the star chart renderer and campaign recorder
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
-tests/test_ffw.py         120 tests, including the rulebook's worked examples
+tests/test_ffw.py         148 tests, including the rulebook's worked examples
 tools/                    data extraction, agent training, notebook generation
 ```
 
@@ -31,7 +31,7 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 120 tests, about 50 seconds
+python -m unittest discover tests          # 148 tests, about 50 seconds
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -436,10 +436,23 @@ Run at scale, the league's benchmark curves were `+23 +35 +32 +41 +41 +23`
 games per benchmark the wobble is noise, so the final verification is the number
 to trust:
 
-| side | advantage over stock | verdict |
-|---|---|---|
-| Zhodani | +25.4 ± 6.7 VP | better (3.8σ) |
-| Imperial | +40.0 ± 9.3 VP | better (4.3σ) |
+| side | vs `ScriptedAgent` | vs `HeuristicAgent` | verdict |
+|---|---|---|---|
+| Zhodani | +11.1 ± 1.9 VP | +2.4 ± 2.0 VP | **indistinguishable** |
+| Imperial | +20.0 ± 2.2 VP | +14.5 ± 2.0 VP | better (7.3σ) |
+
+Those are the corrected figures, and the correction matters. The first run of
+this table read `+25.4 ± 6.7` and `+40.0 ± 9.3`, measured over ten paired games
+against `ScriptedAgent`. Two things were wrong with it. Ten games is not enough
+to state a number to one decimal place — parallel evaluation made 120 games
+affordable and the error bars fell by a factor of three. And `ScriptedAgent`'s
+historical opening is itself worth about five victory points against plain
+`HeuristicAgent`, so "beats stock" was partly a measurement of a self-inflicted
+handicap. Re-run against an opponent that is not holding a brick, **the trained
+Zhodani doctrine is no better than the untrained one**; the trained Imperial
+doctrine is genuinely stronger, by about a third less than first reported.
+`tools/rebaseline.py` re-runs the whole comparison and writes
+`ffw/data/rebaseline.json`.
 
 `train_at_scale.py` ends with a verification step: it plays the trained
 doctrine against the stock one over paired games and reports the advantage with
@@ -520,6 +533,83 @@ and are equipped for it. The armistice rule reads as the counterweight: from
 turn 26 the Zhodani may end the war unilaterally at a cost of two victory
 levels, which turns a typical +150 into a stalemate.
 
+### The turn the game actually ends
+
+The rulebook gives no turn limit. Play continues "until a player achieves an
+automatic victory or until an armistice occurs", and rule 8 prices that
+armistice precisely:
+
+> If the Zhodani player unilaterally declares an armistice on or between turns
+> 26 to 51, the level of victory is shifted two levels in favor of the Imperial
+> player. If the Zhodani player unilaterally declares an armistice on or after
+> turn 52, the level of victory is shifted one level in favor of the Imperial
+> player.
+
+Every measurement in this project had been run to turn 30, 40 or 45 for speed.
+That is *before the game's own ending condition can fire* — so the armistice
+never happened in any of them, and the doctrine's handling of it was never
+graded. Left unexamined, it declared at turn 40 whenever it was ahead, paying
+two victory levels for nothing. Waiting for the turn-52 boundary costs one.
+
+Simply moving that boundary is worth **+0.90 ± 0.08 victory levels over sixty
+games** — the single largest effect measured anywhere in this project, and it
+comes from reading the rulebook rather than from any training. The outcome
+distribution moves from `stalemate ×47, Zhodani marginal ×12, Imperial marginal
+×1` to `Zhodani marginal ×38, Zhodani major ×14, stalemate ×7, Imperial marginal
+×1`. The victory *margin* barely moves: +173 to +179.
+
+That gap between margin and level is the point, and it is why the project now
+keeps two measures:
+
+- **`evaluate_paired`** scores by victory-point margin. It stays the right tool
+  for *comparing play*, because it is continuous and resolves differences the
+  nine-step victory table rounds away.
+- **`outcome_series`** scores by victory level, and defaults to `max_turns=60`
+  so the boundary that decides the game is actually reachable. Use it when the
+  question is who won rather than by how much.
+
+A doctrine tuned only on margin optimises a quantity that does not settle the
+game. `TestArmistice` pins the rule down, including the rulebook's own worked
+example: turn 34, margin 127, a Zhodani major victory shifted two levels to a
+stalemate.
+
+### What a rules audit turned up
+
+Rule 6 was implemented in outline and wrong in three specifics, all found by
+reading the booklet against the code rather than by any failing test:
+
+- **Fleet markers never arrived.** The reinforcements table's third column is
+  fleet markers; the code read that column, spawned the admiral and special
+  counter that accompany a fleet, and never released the marker itself.
+  Meanwhile all fourteen were spendable from turn 1, so rule 3's "a player may
+  have only a limited number of fleets in play, as determined by his order of
+  battle" had no force at all, and the Imperium opened with ten markers it
+  should have had to wait for. `Fleet.available` now separates *the player owns
+  this marker* from `Fleet.active`, *it is on the map*.
+- **The black globes were in the ordinary draw pile.** Rule 9 sets the four
+  6-2-8 battle squadrons aside — "they are not selected at random for initial
+  forces or reinforcements" — and releases them on the Imperial player's first
+  roll of 6, in place of that roll's usual units. They are now a group of their
+  own.
+- **The warrant could never reach anyone.** It is the only way the Imperial
+  navy may land troops on an interdicted world, and the agent code correctly
+  refused to land without it — but the warrant was a counter in a pool nothing
+  ever drew from, so no admiral could ever hold one. It is one counter in rule
+  6's special group, so it now arrives on a die roll partway through the war,
+  and sets its holder's precedence to 0.
+
+Restricting the Imperium's opening fleet markers sounds like a balance change
+and turned out not to be one: seat bias over 120 paired games moved from
++173.4 ± 3.3 to +171.2 ± 3.5, a difference of 2 ± 5. Correctness, not balance.
+Fourteen tests in `TestReinforcementSchedule` hold the schedule to the booklet.
+
+One number in the audit is not quoted rule. The opening fleet allotment lives
+on the order of battle charts, which are printed on the player aid rather than
+in the rules booklet, and so are not in the PDF this project reads. What the
+booklet does settle is that the allotment is *smaller* than the counter mix —
+otherwise the turn-2 draw of three markers would mean nothing. The figures in
+`oob.INITIAL_FLEETS` are the project's best reading, and are marked as such.
+
 ### The free worlds
 
 Eighteen of the Marches' neutral worlds have no defence battalions and no
@@ -545,14 +635,28 @@ fire needed two things beyond the behaviour itself:
 
 Measured over thirty games, the behaviour moves the Imperial share from 0.8
 worlds (1.5 VP) to 2.6 (7.0 VP), and drops the worlds nobody claims from 9.0 to
-7.3. Its effect on the final margin is **+4.8 ± 5.7 VP over fifty paired
-games** — the right sign, and smaller than the measurement can resolve. The
-honest reading is that the points are real and the detour costs most of what it
-earns; `tools/picket_check.py` reruns the whole comparison, reporting the
-worlds claimed as well as the margin, because the direct tally is far less
-noisy than a game result. Both halves can be switched off independently:
-`pickets=False` stops the detachment, `free_world=0` stops free worlds pulling
-on ordinary fleets.
+7.3. Its effect on the final margin is **+5.2 ± 1.4 VP over 240 paired games**
+— better at 3.7σ. That figure took three attempts to pin down, and the first
+two are worth recording:
+
+- At fifty paired games it read **+4.8 ± 5.7**: the right sign, and smaller
+  than the measurement could resolve. The honest reading at the time was that
+  the points were real and the detour cost most of what it earned. Parallel
+  evaluation made 240 games affordable, and the same effect is now four
+  standard errors clear of zero. Nothing changed but the sample size.
+- It was also, briefly, being measured against a Imperium that held all
+  fourteen fleet markers from turn 1 — markers the order of battle should have
+  made it wait for (see the rules audit above). With the schedule enforced the
+  effect survives, but a behaviour that spends a scarce resource has to be
+  measured against the real scarcity.
+
+The default is side-aware — the Imperium pickets, the Zhodani does not — and
+forcing both sides to picket is **10.8 ± 2.6 VP worse** than that default, so
+the asymmetry is doing real work. `tools/picket_check.py` reruns the whole
+comparison, reporting the worlds claimed as well as the margin, because the
+direct tally is far less noisy than a game result. Both halves can be switched
+off independently: `pickets=False` stops the detachment, `free_world=0` stops
+free worlds pulling on ordinary fleets.
 
 ## Known limits
 

@@ -366,6 +366,13 @@ class Fleet:
     admiral: int | None = None
     plot: dict[int, tuple[str, str]] = field(default_factory=dict)  # turn -> (kind, hex)
     active: bool = False
+    #: rule 3: "a player may have only a limited number of fleets in play, as
+    #: determined by his order of battle".  Markers arrive as reinforcements --
+    #: three to the Imperium on turn 2 and more from the reinforcements table --
+    #: so a marker the order of battle has not released yet cannot be spent.
+    #: ``active`` says the marker is on the map now; ``available`` says the
+    #: player owns it at all.  A disbanded fleet stays available.
+    available: bool = False
 
     @property
     def side(self) -> str:

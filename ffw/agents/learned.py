@@ -178,7 +178,17 @@ class NeuralAgent(HeuristicAgent):
         self.w["concentration"] = self._base["concentration"] * (1.0 + 0.4 * press)
 
     def declare_armistice(self, state, engine):
-        if self.side != ZHODANI or state.turn < 30:
+        """As the doctrine, but the network judges when the position has peaked.
+
+        The turn-52 boundary still dominates: it is worth a whole victory level,
+        which no assessment of the position can outweigh unless the margin is
+        actually collapsing.
+        """
+        if self.side != ZHODANI:
             return False
-        # stop when the network thinks the position has peaked
-        return self._assess(state) > 0.45 and state.victory_margin() > 55
+        if state.victory_margin() <= 55:
+            return False
+        if state.turn >= 52:
+            return True
+        return state.turn >= 26 and self._assess(state) > 0.45 \
+            and state.victory_margin() < max(self._margin_log[-6:], default=0) - 40

@@ -58,8 +58,18 @@ def _sq(kind, jump, refuel, a, b, d, red):
 
 
 # ---- Imperial ------------------------------------------------------------
+#: The four 6-2-8 battle squadrons carry black globe generators.  Rule 9: "Set
+#: these counters aside, as they are not selected at random for initial forces
+#: or reinforcements.  Instead, these squadrons and one fleet (including its
+#: associated admiral and special group draws) are available as reinforcements
+#: the first time the Imperial player rolls a 6 when determining Imperial
+#: reinforcements.  These units are received in place of the units usually
+#: received on a roll of 6, not in addition to them."  They are therefore a
+#: group of their own rather than four counters in the battle-squadron pool.
+IMPERIAL_BLACK_GLOBES = [
+    (_sq("battle", 4, UNSTREAMLINED, 6, 2, 8, (3, 1, 4)), 4),
+]
 IMPERIAL_BATTLE = [
-    (_sq("battle", 4, UNSTREAMLINED, 6, 2, 8, (3, 1, 4)), 4),   # black globes
     (_sq("battle", 4, UNSTREAMLINED, 5, 1, 7, (2, 0, 3)), 6),
     (_sq("battle", 4, PARTIAL,       3, 1, 7, (1, 1, 4)), 3),
     (_sq("battle", 3, UNSTREAMLINED, 8, 0, 4, (4, 0, 2)), 6),
@@ -261,6 +271,28 @@ ZHODANI_FLEETS = ["40th", "68th", "65th", "67th", "47th", "28th", "35th",
                   "17th Colonial", "1st Assault", "2nd Assault", "3rd Assault"]
 SWORD_WORLDS_FLEETS = ["Joyeuse Fleet", "Gram Fleet"]
 VARGR_FLEETS = ["Uthilh Fleet", "Gireel Fleet"]
+
+#: How many fleet markers each navy holds at the start of play.  Rule 6 gives
+#: the Imperial player three more markers on turn 2 and further markers from
+#: the reinforcements table, which only means anything if he does not begin
+#: with all fourteen -- so the counter mix alone settles that the initial
+#: allotment is smaller than the total.
+#:
+#: The exact opening figures live on the order of battle charts, which are
+#: printed on the player aid rather than in the rules booklet and so are not in
+#: the PDF this project reads.  The numbers below are the ones the deployment
+#: code has always passed to ``_organise_new_fleets``, and they match the
+#: rulebook's account of the opening: the Zhodani attack with almost everything
+#: while the Imperium, taken by surprise, has to assemble its command structure
+#: as the war goes on.  Treat them as the project's best reading, not as quoted
+#: rule.
+INITIAL_FLEETS = {"imperial": 4, "zhodani": 11,
+                  "sword_worlds": 2, "vargr": 2}
+
+#: Rule 6: on turn 2 the Imperial player "randomly selects three fleet markers
+#: from the fleet group, three admirals from the admirals group, and three
+#: counters from the special group".
+TURN_2_IMPERIAL_DRAW = 3
 
 # --------------------------------------------------------------------------
 # replacement point schedules (order of battle charts)
