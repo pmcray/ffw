@@ -74,6 +74,38 @@ def score_for(side: str, margin: float) -> float:
     return margin if side == ZHODANI else -margin
 
 
+#: How much a victory level is worth against the margin when both are in the
+#: objective.  A level spans fifty to a hundred victory points, so anything
+#: comfortably above that makes the level dominant while leaving the margin to
+#: break ties -- which it has to, because nine discrete steps give a
+#: cross-entropy search almost nothing to walk down.
+LEVEL_WEIGHT = 200.0
+
+
+def objective_score(side: str, margin: float, result: str,
+                    objective: str = "margin") -> float:
+    """What a training run is actually trying to maximise.
+
+    ``"margin"`` is the historical behaviour: the victory-point margin, signed
+    for ``side``.  It is continuous and easy to optimise, and it is *not* what
+    the rules settle on -- rule 8's armistice shifts the victory table without
+    moving the margin at all, so a doctrine can gain fifty points inside a
+    level boundary and have won nothing the rules recognise.
+
+    ``"level"`` scores the victory table itself, with the margin retained as a
+    tiebreaker at 1/200th weight.  Use it when the training games run long
+    enough to reach turn 52; below that the armistice cannot fire and the two
+    objectives differ only by rounding.
+    """
+    signed = score_for(side, margin)
+    if objective == "margin":
+        return signed
+    if objective != "level":
+        raise ValueError("unknown objective %r" % objective)
+    level = level_index(result) - level_index("stalemate")
+    return score_for(side, level * LEVEL_WEIGHT) + signed
+
+
 def play_paired(agent_a, agent_b, seed: int = 0, max_turns: int = 45):
     """Play a matchup twice on the same seed with the seats swapped.
 
@@ -306,6 +338,55 @@ def outcome_series(agent_a, agent_b, games: int = 20, seed: int = 0,
     return stats
 
 
+def _run_paired_both(job):
+    agent_a, agent_b, seed, max_turns = job
+    first_margin, first, _ = play_match(agent_a(IMPERIAL, seed),
+                                        agent_b(ZHODANI, seed + 1),
+                                        seed=seed, max_turns=max_turns)
+    second_margin, second, _ = play_match(agent_b(IMPERIAL, seed),
+                                          agent_a(ZHODANI, seed + 1),
+                                          seed=seed, max_turns=max_turns)
+    return ((second_margin - first_margin) / 2.0,
+            (level_index(second) - level_index(first)) / 2.0, first, second)
+
+
+def paired_both(agent_a, agent_b, games: int = 20, seed: int = 0,
+                max_turns: int = 60, workers: int | None = None) -> dict:
+    """Both scores from one set of games: margin and victory level.
+
+    ``evaluate_paired`` and ``outcome_series`` on the same seeds play exactly
+    the same games and throw away different halves of each result -- one keeps
+    the margin, the other the result string.  Running them separately therefore
+    costs twice what it should, and any tool that wants both numbers is playing
+    the whole field twice over.
+
+    Returns ``{"margin": ..., "level": ...}``, each in the shape ``summarise``
+    produces, so either can be read exactly as before.  Because the two come
+    from the *same* games rather than merely from the same seeds, a
+    disagreement between them is a genuine disagreement between the measures
+    and not something the sampling could have caused.
+    """
+    jobs = [(agent_a, agent_b, seed + g, max_turns) for g in range(games)]
+    if workers is None:
+        workers = default_workers(games)
+    if workers > 1 and _picklable(jobs[0]):
+        rows = list(_pool(workers).map(_run_paired_both, jobs))
+    else:
+        rows = [_run_paired_both(j) for j in jobs]
+
+    margin = summarise([r[0] for r in rows])
+    margin["unit"] = "victory points"
+    level = summarise([r[1] for r in rows])
+    level["unit"] = "victory levels"
+    results: dict[str, int] = {}
+    for _, _, first, second in rows:
+        for r in (first, second):
+            results[r] = results.get(r, 0) + 1
+    level["results"] = dict(sorted(results.items(),
+                                   key=lambda kv: level_index(kv[0])))
+    return {"margin": margin, "level": level}
+
+
 def summarise(advantages) -> dict:
     """Mean, standard error and a verdict -- the one place that decides.
 
@@ -365,11 +446,22 @@ def train_weights(side: str = ZHODANI, generations: int = 6,
                   population: int = 12, elite: int = 4, games: int = 2,
                   sigma: float = 0.45, opponent=None, seed: int = 0,
                   base_weights: dict | None = None, max_turns: int = 45,
-                  progress=None):
+                  objective: str = "margin", progress=None):
     """Cross-entropy optimisation of the doctrine weights for one side.
+
+    ``objective`` selects what is being maximised -- see ``objective_score``.
+    It defaults to ``"margin"`` because that is what every committed agent was
+    trained on, but ``"level"`` is the one that matches the rules, and is worth
+    having whenever ``max_turns`` is at least 52.
 
     Returns ``(best_weights, log)``.
     """
+    if objective == "level" and max_turns < 52:
+        raise ValueError(
+            "the level objective needs max_turns >= 52: rule 8's armistice "
+            "boundary is at turn 52, and a game cut off before it cannot "
+            "reach the level it would have scored (got max_turns=%d)"
+            % max_turns)
     rng = np.random.default_rng(seed)
     mean = np.asarray(weight_vector(base_weights), dtype=np.float64)
     spread = np.full(mean.shape, sigma)
@@ -389,12 +481,12 @@ def train_weights(side: str = ZHODANI, generations: int = 6,
             other = (opponent(state_side(side), match_seed) if opponent
                      else ScriptedAgent(state_side(side), seed=match_seed))
             if side == ZHODANI:
-                margin, _, _ = play_match(other, learner, seed=match_seed,
-                                          max_turns=max_turns)
+                margin, result, _ = play_match(other, learner, seed=match_seed,
+                                               max_turns=max_turns)
             else:
-                margin, _, _ = play_match(learner, other, seed=match_seed,
-                                          max_turns=max_turns)
-            total += score_for(side, margin)
+                margin, result, _ = play_match(learner, other, seed=match_seed,
+                                               max_turns=max_turns)
+            total += objective_score(side, margin, result, objective)
         return total / len(match_seeds)
 
     incumbent = evaluate(mean)

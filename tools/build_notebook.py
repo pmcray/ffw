@@ -570,6 +570,48 @@ for spine in ax.spines.values():
     spine.set_color(COLORS['grid'])
 plt.show()"""),
 
+md("""### The turn the game actually ends
+
+Every number above is a **victory-point margin**, and the margin is not what
+the rules settle on. There is no turn limit in the rulebook — play runs "until
+a player achieves an automatic victory or until an armistice occurs" — and rule
+8 prices the armistice: the Zhodani may end the war unilaterally from turn 26,
+which shifts the victory table *two* levels towards the Imperium through turn
+51 and only *one* from turn 52.
+
+So two positions with the same margin can end a level apart, and a game cut off
+at turn 30 or 40 never reaches the boundary that decides it. `paired_both`
+plays each matchup once and scores it both ways, which is the only honest way
+to see how far the two measures come apart."""),
+
+code("""from ffw.training import AgentSpec, paired_both, level_index
+
+both = paired_both(AgentSpec('heuristic'), AgentSpec('random'),
+                   games=3, seed=4200, max_turns=56)
+print('doctrine vs random, scored two ways:')
+print('   by margin  %+7.1f VP     +/- %.1f'
+      % (both['margin']['advantage'], both['margin']['stderr']))
+print('   by level   %+7.2f levels +/- %.2f'
+      % (both['level']['advantage'], both['level']['stderr']))
+print()
+for name, count in both['level']['results'].items():
+    print('   %-28s %d' % (name, count))"""),
+
+md("""Three games is far too few to read the level figure — expect it to
+come out anywhere, including the wrong sign. Run at forty paired games in
+`tools/tournament.py`, that same comparison reads **+55.5 VP but only +0.09
+victory levels**: the doctrine beats a random player by fifty-five points and
+barely a tenth of a level, because both of them lose the war. The victory table
+has nine steps and most games land on the same one, so it is a poor instrument
+for *ranking play* and the right one for asking *who won*.
+
+The largest single effect measured anywhere in this project comes from that
+table. The doctrine used to declare the armistice at turn 40 whenever it was
+ahead, paying two victory levels when waiting for turn 52 costs one. Fixing
+that is worth **+0.90 ± 0.08 victory levels over sixty games** — ten times the
+doctrine's whole advantage over random play — while moving the margin by six
+points. It came out of reading the rulebook, not out of training."""),
+
 md("""### A lookahead agent
 
 `LookaheadAgent` copies the whole game state and rolls it forward a few turns

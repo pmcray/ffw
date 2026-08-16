@@ -1702,3 +1702,112 @@ class TestReinforcementSchedule(unittest.TestCase):
         _release_marker(state, fleet)
         self.assertFalse(fleet.active)
         self.assertTrue(fleet.available)
+
+
+class TestPairedBoth(unittest.TestCase):
+    """Both scores off one set of games, and they must match the separate runs.
+
+    ``evaluate_paired`` and ``outcome_series`` on the same seeds were already
+    playing identical games and discarding different halves of each result, so
+    a tool wanting both numbers played the whole field twice.  These tests are
+    what makes the combined path safe to substitute: if it ever drifts from the
+    two it replaces, the saving is worthless.
+    """
+
+    def test_it_reproduces_both_separate_measurements_exactly(self):
+        from ffw.training import (AgentSpec, evaluate_paired, outcome_series,
+                                  paired_both)
+        a, b = AgentSpec("heuristic"), AgentSpec("scripted")
+        kw = dict(games=4, seed=6100, max_turns=14)
+        both = paired_both(a, b, **kw)
+        self.assertAlmostEqual(both["margin"]["advantage"],
+                               evaluate_paired(a, b, **kw)["advantage"], places=9)
+        separate = outcome_series(a, b, **kw)
+        self.assertAlmostEqual(both["level"]["advantage"],
+                               separate["advantage"], places=9)
+        self.assertEqual(both["level"]["results"], separate["results"])
+
+    def test_each_half_keeps_the_shape_summarise_produces(self):
+        from ffw.training import AgentSpec, paired_both
+        both = paired_both(AgentSpec("heuristic"), AgentSpec("scripted"),
+                           games=2, seed=6101, max_turns=12)
+        for key, unit in (("margin", "victory points"), ("level", "victory levels")):
+            for field in ("advantage", "stderr", "games", "verdict", "advantages"):
+                self.assertIn(field, both[key], "%s.%s" % (key, field))
+            self.assertEqual(both[key]["unit"], unit)
+
+    def test_a_mirror_match_is_level_on_both_measures(self):
+        from ffw.training import AgentSpec, paired_both
+        spec = AgentSpec("scripted")
+        both = paired_both(spec, spec, games=3, seed=6102, max_turns=12)
+        self.assertEqual(both["margin"]["advantage"], 0.0)
+        self.assertEqual(both["level"]["advantage"], 0.0)
+
+    def test_parallel_and_serial_agree(self):
+        from ffw.training import AgentSpec, paired_both
+        a, b = AgentSpec("heuristic"), AgentSpec("scripted")
+        kw = dict(games=4, seed=6103, max_turns=10)
+        self.assertEqual(paired_both(a, b, **kw)["margin"]["advantages"],
+                         paired_both(a, b, workers=1, **kw)["margin"]["advantages"])
+
+
+class TestTrainingObjective(unittest.TestCase):
+    """What a training run maximises, now that margin is known not to be it.
+
+    Every committed agent was trained on the victory-point margin of a game cut
+    off at turn 30.  Rule 8's armistice decides the war at turn 52 and moves
+    the victory table without moving the margin, so that objective is a proxy
+    -- and the tournament shows how loose a proxy: ``RandomAgent`` is 55 VP
+    worse than the doctrine and less than a tenth of a victory level worse.
+    """
+
+    def test_the_margin_objective_is_unchanged(self):
+        from ffw.training import objective_score, score_for
+        for side in (IMPERIAL, ZHODANI):
+            for margin in (-120.0, 0.0, 173.0):
+                self.assertEqual(
+                    objective_score(side, margin, "stalemate", "margin"),
+                    score_for(side, margin))
+
+    def test_a_level_outweighs_any_margin_inside_it(self):
+        from ffw.training import objective_score
+        # a marginal Zhodani win on a thin margin must beat a stalemate on a
+        # fat one, or the objective is still just the margin in disguise
+        thin = objective_score(ZHODANI, 60.0, "zhodani marginal victory", "level")
+        fat = objective_score(ZHODANI, 145.0, "stalemate", "level")
+        self.assertGreater(thin, fat)
+
+    def test_the_margin_still_breaks_ties_within_a_level(self):
+        from ffw.training import objective_score
+        near = objective_score(ZHODANI, 150.0, "zhodani major victory", "level")
+        far = objective_score(ZHODANI, 190.0, "zhodani major victory", "level")
+        self.assertGreater(far, near)
+
+    def test_it_is_antisymmetric_between_the_seats(self):
+        from ffw.training import objective_score
+        for result in ("stalemate", "zhodani major victory",
+                       "imperial decisive victory"):
+            self.assertAlmostEqual(
+                objective_score(ZHODANI, 90.0, result, "level"),
+                -objective_score(IMPERIAL, 90.0, result, "level"), places=9)
+
+    def test_an_unknown_objective_is_refused(self):
+        from ffw.training import objective_score
+        with self.assertRaises(ValueError):
+            objective_score(ZHODANI, 0.0, "stalemate", "vibes")
+
+    def test_training_on_levels_refuses_a_truncated_game(self):
+        """A game that stops at turn 40 cannot reach the boundary at 52."""
+        from ffw.training import train_weights
+        with self.assertRaises(ValueError):
+            train_weights(side=ZHODANI, generations=1, population=2, elite=1,
+                          games=1, max_turns=40, objective="level")
+
+    def test_training_on_levels_runs_when_the_game_can_finish(self):
+        from ffw.training import train_weights
+        weights, log = train_weights(side=ZHODANI, generations=1, population=2,
+                                     elite=1, games=1, seed=3, max_turns=54,
+                                     objective="level")
+        from ffw.agents import DEFAULT_WEIGHTS
+        self.assertEqual(set(weights), set(DEFAULT_WEIGHTS))
+        self.assertEqual(len(log.generations), 1)

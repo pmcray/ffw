@@ -14,6 +14,16 @@ paired games.
 
 Training that cannot be shown to have helped is not worth committing, so the
 verification result is printed last and saved into each agent's metadata.
+
+**A known limitation of every run below.** Training games are cut off at turn
+30 and verification games at turn 40, for cost. The rulebook sets no turn
+limit, and rule 8's armistice boundary -- worth a whole victory level -- sits
+at turn 52, so none of these games reach the condition that decides the war.
+What is being optimised is therefore the victory-point margin at turn 30, which
+is a proxy for winning and not the same thing: see ``paired_both`` and the
+armistice section of the README for how far the two can come apart. The
+Imperial doctrine survives the correction and the Zhodani one does not, which
+is the sort of thing the proxy is expected to get wrong.
 """
 
 from __future__ import annotations
