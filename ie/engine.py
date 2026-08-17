@@ -602,7 +602,10 @@ class Engine:
             if not targets:
                 continue     # "planetary bombardment attacks may not be made
                              # against guerrilla units"
-            target = max(targets, key=lambda u: u.current)
+            target = self.agents[unit.side].bombardment_target(
+                s, unit.side, unit.location, targets, self)
+            if target is None or target not in targets:
+                continue
             against_surface[target.uid] = (against_surface.get(target.uid, 0.0)
                                            + unit.bombard_factor())
 
@@ -700,6 +703,11 @@ class Engine:
             if isinstance(unit, Base) and s.geometry.terrain[cell] in (
                     terra.TUNDRA, terra.PERMANENT_ICE, terra.SEASONAL_ICE):
                 return          # a base may not land on ice or tundra
+            if isinstance(unit, SurfaceUnit) and \
+                    self._stacking(side).get(cell, 0.0) + unit.current \
+                    > oob.STACKING_LIMIT:
+                return          # the stacking limit applies to a hex however
+                                # the unit got there
         elif carrier.location == FAR_ORBIT:
             if cell != LUNA:
                 return          # "naval units may only load from or unload
@@ -802,6 +810,7 @@ class Engine:
         occupied = {u.location for u in s.surface.values()
                     if u.side != side and u.carrier is None and not u.dead
                     and isinstance(u.location, int)}
+        stacked = self._stacking(side)
         for uid, destination in self.agents[side].surface_moves(s, side, self).items():
             unit = s.surface.get(uid)
             if unit is None or unit.side != side or unit.dead:
@@ -814,22 +823,56 @@ class Engine:
                 continue
             if destination not in s.geometry.land:
                 continue        # "may not end its movement in an all-sea hex"
+            if destination != unit.location and \
+                    stacked.get(destination, 0.0) + unit.current > oob.STACKING_LIMIT:
+                continue        # "no more than 1000 combat factors ... in a
+                                # single hex"
             cost = self._path_cost(unit, unit.location, destination,
                                    enemy_zoc, occupied)
             if cost is not None and cost <= oob.MOVEMENT_POINTS:
+                stacked[unit.location] = stacked.get(unit.location, 0.0) - unit.current
+                stacked[destination] = stacked.get(destination, 0.0) + unit.current
                 unit.location = destination
 
+    def _stacking(self, side: str) -> dict:
+        """How many combat factors ``side`` has in each hex.
+
+        Rule 3's stacking limit is a limit on what a player may have in a hex,
+        not on what both players may have between them, so the two sides are
+        counted separately.  A move that would break it is refused rather than
+        corrected, and moves are taken in the order the agent offers them: a
+        doctrine that wants a particular unit in a full hex has to say so
+        first, which is the same discipline the loading order needs.
+        """
+        totals: dict = {}
+        for unit in self.state.surface.values():
+            if unit.side != side or unit.carrier is not None or unit.dead:
+                continue
+            if isinstance(unit.location, int):
+                totals[unit.location] = totals.get(unit.location, 0.0) + unit.current
+        return totals
+
     def _path_cost(self, unit, origin, destination, enemy_zoc, occupied):
-        """Cheapest legal path, charging the zone-of-control surcharges.
+        """Cheapest legal path, charging the zone-of-control surcharges."""
+        if origin == destination:
+            return 0
+        return self.movement_costs(unit, enemy_zoc, occupied,
+                                   origin=origin).get(destination)
+
+    def movement_costs(self, unit, enemy_zoc, occupied, origin=None) -> dict:
+        """What every hex within reach costs this unit, from one search.
 
         "The total cost to enter a hex in an enemy zone of control is 2
         movement points ... the total cost to enter an enemy occupied hex in an
         enemy zone of control is 3."  A commando "may totally ignore the
         presence of enemy units and enemy zones of control while moving"; a
         guerrilla starting in an enemy-occupied hex "may move only one hex".
+
+        The whole cost map is returned rather than one hex's cost, because a
+        doctrine choosing where to send a corps wants to compare thirty
+        destinations and the search that answers one answers all of them.
         """
-        if origin == destination:
-            return 0
+        origin = unit.location if origin is None else origin
         commando = unit.cls.commando
         if unit.cls.guerrilla and origin in occupied:
             limit = 1
@@ -857,7 +900,7 @@ class Engine:
                         best[step] = total
                         nxt.append(step)
             frontier = nxt
-        return best.get(destination)
+        return best
 
     def combat_phase(self, side: str) -> None:
         """Combat in every hex where the moving side meets the other."""

@@ -398,6 +398,14 @@ class GameState:
         """
         return [c for c in self.geometry.urban if c not in self.garrisoned]
 
+    def objective_met(self) -> bool:
+        """Whether the Imperium has achieved what it came for.
+
+        "This occurs when there are fewer than 10 urban hexes remaining to the
+        Solomani player."  Everything in rule 8 hangs off this sentence.
+        """
+        return len(self.solomani_urban()) < VICTORY_URBAN_THRESHOLD
+
     def victory_points(self) -> int:
         """Rule 8's victory point total, from the Imperial player's side.
 
@@ -405,8 +413,15 @@ class GameState:
         is awarded 10 victory points", modified -1 per quarter the game lasted,
         -1 per replacement wave taken, +1 if all Solomani non-guerrilla surface
         units are eliminated, and +1 if all Solomani naval units are.
+
+        *When this occurs* is a condition and not a formality.  The ten points
+        are the reward for reducing the Solomani below ten cities; an invasion
+        that runs out of turns having taken none of them has not earned them,
+        and awarding them anyway makes the clock the only term in the score --
+        every game ends in the same level of victory no matter how it was
+        played, which is exactly what this file used to do.
         """
-        points = 10
+        points = 10 if self.objective_met() else 0
         points -= max(1, self.quarters_elapsed)
         points -= self.waves_taken
         if not any(u.side == SOLOMANI and not u.cls.guerrilla and not u.dead

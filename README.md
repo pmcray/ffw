@@ -24,18 +24,21 @@ ffw/                      the game
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
 tests/test_ffw.py         164 tests, including the rulebook's worked examples
-tests/test_ie.py          107 tests for Invasion: Earth
+tests/test_ie.py          116 tests for Invasion: Earth
 tests/test_strategy.py    24 tests for the shared cross-game layer
 strategy/                 shared feature encoding and game adapters
 ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
+  agents/heuristic.py     the doctrine, both sides
+  agents/legacy.py        the doctrine it replaced, kept to measure against
 tools/                    data extraction, agent training, notebook generation
+  ie_campaign.py          what became of an Invasion: Earth campaign, over seeds
 ```
 
 ## Quick start
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 295 tests, about 100 seconds
+python -m unittest discover tests          # 304 tests, about two minutes
 jupyter notebook FifthFrontierWar.ipynb
 ```
 
@@ -719,7 +722,8 @@ War: one player commands the Imperial invasion force, the other the defence of
 the homeworld.
 
 ```bash
-python -m unittest tests.test_ie      # 107 tests
+python -m unittest tests.test_ie      # 116 tests
+python tools/ie_campaign.py           # what became of eight campaigns
 ```
 
 ```python
@@ -802,29 +806,143 @@ game. `TestBombardmentPooling` now holds the rule down.
 
 Every Imperial unit starts in the out-system box. Total lift is 2875 combat
 factors against an army of 4040 — and two of the four 600-factor transport
-squadrons are withdrawn on turn 2 — so the invasion is three convoys, not one.
-A transport that unloads and then parks in orbit is the difference between
-landing forty percent of the army and landing all of it.
+squadrons are withdrawn on turn 2, leaving 1675 — so the invasion is three
+convoys, not one, and every convoy has to cross the close orbit box where the
+planetary defences are.
 
 Two rules dominate everything the doctrine does:
 
 - **The assault modifier.** A unit landing in or leaving a hex is fired on by
   every planetary defence within three hexes, at **-3** on the surface
-  bombardment table unless it is a marine or jump troop. Making the doctrine
-  weight that penalty properly — it is the heaviest single term in the landing
-  score — more than doubled what it got ashore, from 302 factors to 700.
+  bombardment table unless it is a marine or jump troop. It is the heaviest
+  single term in the landing score, and correctly so.
 - **Grav mobility.** Solomani troops have ten movement points and a hex is
   1100 km, so they can mass on any single Imperial stack from a third of the
   way round the planet. There is no safe beach, only distance from the mass.
 
-**Where the doctrine stands:** it lands and holds around 700 combat factors,
-and does not yet convert that into garrisoned cities. Garrisoning is by zone of
-control — one corps covers its hex and six more — but a hex in a Solomani zone
-of control cannot be garrisoned, so the Imperium has to destroy the local
-defenders first, and 700 factors against 4180 is not enough to do it. The
-engine implements the rules; the Imperial doctrine has not solved the game.
-That is the honest state of it, and it is exactly the kind of gap the training
-framework in `ffw/training.py` exists to close.
+### The doctrine that landed on an island
+
+The first Imperial doctrine here got about seven hundred combat factors ashore,
+held them, and took no cities in any game ever played. It was described in this
+file as an unsolved problem. It was worse than that: it was four separate
+mistakes, and finding them meant fixing two things in the engine first.
+
+**The scoreboard was not scoring.** Rule 8 says that when the Solomani are
+reduced below ten urban hexes "the play of the game ceases, and the Imperial
+player is awarded 10 victory points", less one per quarter and one per
+replacement wave. The award was being made unconditionally, so a game that ran
+out of turns with nothing landed still scored ten minus the clock — an *imperial
+major victory* for an invasion that never reached the planet. Every game ended
+on the same level for the same reason, which is exactly the flat outcome that
+made the transfer experiment unmeasurable. `state.objective_met()` now gates the
+ten points on the condition the sentence attaches them to.
+
+**The stacking limit was not enforced.** "A player may have no more than 1000
+combat factors of surface units in a single hex" was quoted in `ie/oob.py` and
+respected only by the doctrine's own landing code. Nothing stopped the Solomani
+walking four field armies — two thousand factors — onto one beachhead in one
+movement phase. With the limit enforced in the engine, the worst a landing can
+face is a thousand factors, which is what makes a thousand-factor lodgement a
+defensible proposition rather than a wish.
+
+Then the doctrine itself:
+
+- **It landed on an island, and the scoring asked it to.** The landing score
+  counted cities within three hexes and charged about thirty points for every
+  planetary defence factor within three hexes. The batteries are *in* the
+  cities, so no hex satisfies both, and what maximised the score was an empty
+  island with three distant cities and no way off it. A grav corps has ten
+  movement points: cities seven hexes away are a turn's march, not another
+  theatre. The score now counts cities at marching distance and keeps the
+  three-hex penalty for the guns.
+- **It moved one hex at a time, and only onto cities.** Ten movement points,
+  six hexes considered. Movement is now a real search over everything the unit
+  can reach, scored on the cities a zone of control planted there would
+  garrison.
+- **It landed where a base cannot go.** A base may not be landed in a tundra or
+  ice hex, an Imperial unit needs a base within five hexes to be in supply, and
+  a unit out of supply may not fire and defends at half strength. The doctrine
+  picked tundra anchors, so its bases stayed in orbit, so its army fought at
+  half strength with no fire — and the transports kept flying a third of their
+  capacity in bases that could never be put down. Refusing those anchors, along
+  with drawing the close-orbit screen from the cheapest hulls and capping the
+  convoy at two bases a run, took the measurement from 665 factors ashore and
+  2440 stranded to 2492 ashore and none stranded, in one step. Ablated one at a
+  time from the finished doctrine, none of the three separates from zero at
+  twelve games — allowing tundra anchors again costs 2026 ± 224 factors ashore
+  against 1632 ± 214 — so what is measured here is the three together.
+- **It parked the fleet under the guns.** Every squadron with nothing to do sat
+  in close orbit, where the planetary defences make one pooled attack a turn at
+  halved factors — five or six defence factors destroyed, cheapest hull first,
+  every turn, forever. A squadron on a bombardment mission is "placed on the map
+  in the hex containing the surface unit it is to bombard" and is therefore not
+  in the box when the box is fired on; a squadron with no mission belongs in far
+  orbit, which nothing on Terra can reach. Keeping close orbit empty took the
+  fleet at turn 24 from 3.8 squadrons to 20.5 over six games — the largest
+  single effect measured in this rewrite, and the one that made the lift
+  survivable enough for everything else to matter.
+
+### Two things the rules make true that the guns have to be aimed around
+
+**A battery fires at full strength until the moment it dies.** "The PD unit's
+bombardment factor always remains at full strength until the PD unit is
+entirely eliminated" — so bombardment damage short of a kill buys nothing at
+all. The first version of the retargeting scored fresh batteries above damaged
+ones and walked away from three separate targets at 90% losses. Finishing is the
+whole of the value.
+
+**A percentage is not a factor.** The surface bombardment table returns a
+percentage of *printed* strength, so thirty percent of a 500-factor field army
+is a hundred and fifty factors destroyed in a phase — more than the Solomani
+rebuild in a quarter — while thirty percent of a 20-factor battery is six. The
+doctrine prices batteries in factors (their guns, the cities their zone of
+control freezes, how close they are to finished) precisely so the two kinds of
+target can be compared instead of one being assumed to matter more.
+
+And one thing that looked true and is not. Luna sits in the far orbit box, out
+of range of every planetary defence on the planet, and "naval units may only
+load from or unload onto the surface of Luna" — so the transports could unload
+the army there and never enter close orbit at all. The transport capability
+chart forbids it: a battle squadron lifts twenty combat factors and a cruiser
+five, so nothing but a transport can carry a 100-factor corps off Luna again. An
+army unloaded onto Luna is an army parked on Luna. The idea was implemented,
+measured, and removed; this paragraph is what is left of it.
+
+### What the rewrite is worth
+
+`tools/ie_campaign.py` plays whole campaigns and reports what became of both
+sides. `ie/agents/legacy.py` keeps the old doctrine — Imperial and Solomani
+halves both — so the comparison runs in *this* engine rather than against a
+remembered number from an older commit. Sixteen games of thirty turns per cell,
+same seeds, same engine:
+
+| | old defence | new defence |
+|---|---|---|
+| **old attack** | 0.1 cities, 622 ashore, 2131 stranded, 24 squadrons left, 4195 Solomani factors | 0.2 cities, 898 ashore, 1951 stranded, 12 squadrons, 4484 factors |
+| **new attack** | **1.2 cities, 2418 ashore, 6 stranded, 33 squadrons, 2493 factors** | 0.8 cities, 1937 ashore, 269 stranded, 16 squadrons, 3040 factors |
+
+Read the rows and the invasion works: against the same defence, the army
+reaches Terra instead of a third of it reaching Terra, the fleet survives, and
+the Solomani field army is cut roughly in half instead of standing at full
+strength. Read the columns and the defence works too — the Solomani half of the
+same rewrite, which fires the planetary defences at the bombarding groups on the
+map at full factors instead of at close orbit at half, and parks small units
+next to captured cities to un-garrison them, costs the new attack a third of a
+city and five hundred Solomani factors it would otherwise have destroyed.
+
+**Where the doctrine stands:** it lands the whole army, wins the attrition
+exchange, and still garrisons about one city. The reason is worth stating
+precisely, because it is not the reason this file gave before. Of the sixty-one
+cities, fifty-five to fifty-eight are ungarrisoned for the simplest possible
+reason — no Imperial unit is standing within one hex of them — and only one to
+four are blocked by a Solomani zone of control. The army cannot spread out to
+cover them: a hex is only worth standing on if what is standing there survives
+what can reach it, and while the Solomani field army is alive with ten movement
+points, that means stacks of five hundred factors, which is four or five stacks
+for the whole army and a dozen cities between them. Taking fifty-two needs the
+Solomani field army dead first, and at the rate the exchange runs — about a
+hundred factors a turn against a rebuild of one point per ungarrisoned city per
+turn — that is a longer war than the forty-eight turns the engine allows.
 
 ## Transfer: one encoding, two games
 
@@ -863,27 +981,40 @@ game than either rulebook describes, and that is the price of transfer.
 and asks how well it predicts outcomes in the other, against the baseline of
 what the single `score_margin` slot achieves alone:
 
-| direction | own-game | cross-game | `score_margin` alone |
-|---|---|---|---|
-| `ffw → ie` | +0.305 | +0.321 | **+0.466** |
-| `ie → ffw` | +0.272 | −0.311 | **+0.319** |
+Two blocks of twelve games a side, thirty turns, differing only in which seeds
+they were played on — `python tools/transfer_check.py 12 30 900` and the same
+with `1900`:
 
-Neither direction beats its baseline, so what these runs show is that *one
-feature* carries across, not that a network does. The samples are small — six
-games a side — so this is "not demonstrated", not "does not happen".
+| direction | block | own-game | cross-game | `score_margin` alone |
+|---|---|---|---|---|
+| `ffw → ie` | first | +0.563 | **+0.378** | +0.120 |
+| `ffw → ie` | confirmation | +0.563 | +0.289 | **+0.367** |
+| `ie → ffw` | first | +0.379 | −0.190 | **+0.379** |
+| `ie → ffw` | confirmation | +0.320 | −0.013 | **+0.201** |
 
-The first run of this tool was worse than uninformative and is worth recording.
-It printed a cross-game correlation of exactly +0.000 and a confident verdict,
-and both were meaningless: every *Invasion: Earth* game had ended on the same
-label, because the Imperial doctrine never takes a city. **A correlation
-against a constant is undefined, not zero**, and the two print identically.
-The tool now checks the outcome spread before it reports anything and says
-which kind of zero it is — the same failure that produced a training loss curve
-on constant labels earlier in this project, caught faster the second time.
+The first block cleared its baseline in one direction and the confirmation block
+did not, which is the same regression-to-the-mean lesson the picket question
+taught earlier in this file, arriving on schedule. With one label per game, the
+independent sample size is twelve, not the hundred and twenty rows the
+correlation is computed over, and a swing of that size between blocks is what
+twelve samples buy. The verdict stands where it was: **not demonstrated**.
 
-The honest reading: the plumbing is built and tested, and the interesting
-experiment is blocked behind an Imperial doctrine for *Invasion: Earth* good
-enough for its games to have varied outcomes.
+What has changed is that the question is now askable at all. The first run of
+this tool printed a cross-game correlation of exactly +0.000 and a confident
+verdict, and both were meaningless: every *Invasion: Earth* game had ended on
+the same label, because the Imperial doctrine never took a city and — worse —
+because the victory point total awarded the ten points for the objective
+whether or not the objective was met, so the level of victory was a function of
+the clock alone. **A correlation against a constant is undefined, not zero**,
+and the two print identically. The tool now checks the outcome spread before it
+reports anything and says which kind of zero it is; rule 8's award is now
+conditional; and the rewritten doctrine takes a varying number of cities, so
+`ie`'s labels have a spread to correlate against. The committed
+`transfer_check.json` is the confirmation block.
+
+The honest reading: the plumbing is built and tested, the flat-label blocker is
+gone, and the interesting experiment is now blocked behind sample size and an
+Imperial doctrine that takes one city rather than forty.
 
 ## Known limits
 
@@ -906,6 +1037,23 @@ enough for its games to have varied outcomes.
 - The warrant is handed to the senior Imperial admiral when it is drawn and
   stays there. Rule 5 lets it be transferred between admirals in the same hex
   during the fleet adjustment step; no agent is offered that choice.
+
+In *Invasion: Earth*:
+
+- The doctrine's supply test is a distance, not rule 5's trace. The engine
+  traces a real path that enemy units and zones of control can block; the
+  doctrine asks whether a base is within four hexes and takes the extra hex as
+  its margin, because running the full trace for every candidate hex of every
+  unit would cost more than the decision is worth.
+- No agent is offered the choice of *which* replacement units to rebuild, or
+  where a rebuilt Solomani unit enters; the engine spends the points cheapest
+  first and puts the result in the first ungarrisoned city.
+- The Imperial doctrine never abandons the invasion, and never takes the
+  emergency replacements the initial segment offers. Both are legal moves that
+  no measurement here has had a reason to make.
+- The Solomani doctrine deploys its guerrillas and builds its SDB wings by a
+  fixed rule rather than by any scoring, so the eight guerrilla units and the
+  quarterly wings are a constant of the game rather than a decision in it.
 
 ## Credits
 

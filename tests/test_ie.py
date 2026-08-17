@@ -24,8 +24,8 @@ from ie.state import (BOMBARDMENT, CLOSE_ORBIT, DEEP_SPACE,          # noqa: E40
                       FAR_ORBIT, IMPERIAL, OUT_SYSTEM, OVERWATCH,
                       SOLOMANI, VICTORY_URBAN_THRESHOLD, Base, GameState,
                       enemy_of)
-from ie.agents import (Agent, HeuristicAgent, RandomAgent,           # noqa: E402
-                       ScriptedAgent)
+from ie.agents import (Agent, BeachheadAgent, HeuristicAgent,        # noqa: E402
+                       RandomAgent, ScriptedAgent)
 
 
 class TestGeodesicGrid(unittest.TestCase):
@@ -441,6 +441,26 @@ class TestVictory(unittest.TestCase):
                               (-9, "solomani major victory")):
             self.assertEqual(state.victory_level(points), level, points)
 
+    def test_the_ten_points_are_only_awarded_for_taking_the_cities(self):
+        """Rule 8's award is conditional, and the condition is the whole game.
+
+        Awarded unconditionally it swamps everything else: the total becomes
+        ten minus the clock, every game ends in the same level of victory
+        whatever happened on the ground, and an invasion that never landed
+        scores an imperial major victory.
+        """
+        state = new_game(seed=2)
+        state.turn = 13                       # two complete quarters elapsed
+        self.assertFalse(state.objective_met())
+        self.assertEqual(state.victory_points(), -2)
+        self.assertEqual(state.victory_level(), "solomani marginal victory")
+
+        cities = sorted(state.geometry.urban)
+        state.garrisoned = set(cities[:len(cities) - 5])
+        self.assertTrue(state.objective_met())
+        self.assertEqual(state.victory_points(), 8)
+        self.assertEqual(state.victory_level(), "imperial decisive victory")
+
     def test_a_quarter_and_a_wave_each_cost_a_victory_point(self):
         state = new_game(seed=2)
         state.turn = 13                       # two complete quarters elapsed
@@ -610,6 +630,53 @@ class TestMovement(unittest.TestCase):
             if unit.cls.size in ("corps", "army") or unit.cls.planetary_defense:
                 self.assertIn(unit.location, zoc)
 
+    def test_a_thousand_combat_factors_is_all_a_hex_will_hold(self):
+        """"A player may have no more than 1000 combat factors ... in a hex."
+
+        Unenforced, this is the rule that decides the game: four Solomani
+        field armies are two thousand factors between them, they are grav-
+        mobile with ten movement points, and nothing else stops all four
+        arriving on the same beachhead in the same phase.
+        """
+        state, engine = self.state, self.engine
+        armies = [u for u in state.surface.values()
+                  if u.side == SOLOMANI and u.cls.size == "army"]
+        self.assertGreaterEqual(len(armies), 3)
+        target = next(c for c in sorted(state.geometry.land)
+                      if not state.surface_at(c))
+        movers = armies[:3]
+
+        class Mover(Agent):
+            def surface_moves(self, s, side, e):
+                return {u.uid: target for u in movers}
+
+        engine.agents[SOLOMANI] = Mover(SOLOMANI, seed=1)
+        for unit in movers:                # put them in reach of the target
+            unit.location = state.geometry.adjacent(target)[0]
+        engine.movement_phase(SOLOMANI)
+        stacked = sum(u.current for u in state.surface_at(target, SOLOMANI))
+        self.assertEqual(stacked, oob.STACKING_LIMIT)      # two armies, not three
+        self.assertEqual(sum(1 for u in movers if u.location == target), 2)
+
+    def test_the_stacking_limit_applies_to_landings_too(self):
+        state, engine = self.state, self.engine
+        cell = next(iter(sorted(state.geometry.land)))
+        carrier = next(u for u in state.naval.values()
+                       if u.side == IMPERIAL and u.cls.capacity >= 600)
+        carrier.location = CLOSE_ORBIT
+        army = next(u for u in state.surface.values()
+                    if u.side == IMPERIAL and u.cls.size == "army")
+        army.carrier, army.location = carrier.uid, CLOSE_ORBIT
+        carrier.cargo = [army.uid]
+        filler = [u for u in state.surface.values()
+                  if u.side == IMPERIAL and u.cls.size == "corps"][:6]
+        for unit in filler:                 # 600 factors already ashore
+            unit.location, unit.carrier = cell, None
+        engine._unload(IMPERIAL, army.uid, cell)
+        self.assertEqual(army.location, CLOSE_ORBIT)
+        self.assertEqual(sum(u.current for u in state.surface_at(cell, IMPERIAL)),
+                         600)
+
     def test_a_unit_may_not_end_movement_in_an_all_sea_hex(self):
         state, engine = self.state, self.engine
         unit = next(u for u in state.surface.values()
@@ -708,6 +775,57 @@ class TestBombardmentPooling(unittest.TestCase):
         # the pooled attack is one row of the space bombardment table, whose
         # largest single result is 9 defence factors
         self.assertLessEqual(lost, 4, "fire was resolved per firer, not pooled")
+
+    def test_the_bombarding_player_chooses_which_unit_is_hit(self):
+        """"Each surface unit must be bombarded separately", so someone picks.
+
+        The engine used to pick the biggest, which hands the decision to the
+        defender: park a field army on a battery and the battery is safe for
+        the rest of the war.
+        """
+        state = new_game(seed=61)
+        cell = next(iter(sorted(state.geometry.land)))
+        army = next(u for u in state.surface.values()
+                    if u.side == SOLOMANI and u.cls.size == "army")
+        battery = next(u for u in state.surface.values()
+                       if u.side == SOLOMANI and u.cls.planetary_defense)
+        army.location, battery.location = cell, cell
+        # twenty-four bombardment factors, which is the lowest column the
+        # table cannot return a dash on
+        pooled = 0
+        for squadron in state.naval.values():
+            if squadron.side != IMPERIAL or squadron.cls.bombard == 0:
+                continue
+            if pooled >= 24:
+                break
+            squadron.location, squadron.mission = cell, BOMBARDMENT
+            pooled += squadron.cls.bombard
+
+        class PicksTheBattery(HeuristicAgent):
+            def bombardment_target(self, s, side, where, candidates, engine):
+                return battery
+
+        engine = Engine(state, PicksTheBattery(IMPERIAL, seed=1),
+                        HeuristicAgent(SOLOMANI, seed=2), rng=random.Random(61))
+        engine.bombardment_phase([])
+        self.assertGreater(battery.losses, 0)
+        self.assertEqual(army.losses, 0)
+
+    def test_a_battery_is_worth_more_to_the_doctrine_than_its_combat_factor(self):
+        """Twenty factors that shoot at the fleet every turn and freeze a city.
+
+        The doctrine prices a battery against a field army in factors so the
+        two can be compared at all, and the price rises as the battery nears
+        elimination, because it fires at full strength until it dies.
+        """
+        state = new_game(seed=62)
+        agent = HeuristicAgent(IMPERIAL, seed=1)
+        battery = next(u for u in state.surface.values()
+                       if u.side == SOLOMANI and u.cls.planetary_defense
+                       and u.cls.bombard >= 5)
+        fresh = agent._target_value(state, battery)
+        battery.losses = 80
+        self.assertGreater(agent._target_value(state, battery), fresh)
 
     def test_guerrillas_cannot_be_bombarded_from_orbit(self):
         """"Planetary bombardment attacks may not be made against guerrilla units"."""
@@ -1101,6 +1219,38 @@ class TestPlaythrough(unittest.TestCase):
                                  and isinstance(u.location, int)))
         self.assertGreater(peak, 100, "no army reached the surface")
 
+    def test_the_rewrite_beats_the_doctrine_it_replaced(self):
+        """The baseline is kept so this can be a measurement, not a memory.
+
+        Both doctrines play the same defence on the same seeds.  The claim
+        under test is the one the rewrite was for: the army reaches Terra.  The
+        margin is large enough that four seeds settle it -- the old doctrine
+        landed about six hundred factors and left two thousand out-system in
+        every game measured.
+        """
+        def peak_and_stranded(agent_class):
+            peak = stranded = 0.0
+            for seed in (201, 202, 203, 204):
+                state = new_game(seed=seed)
+                engine = Engine(state, agent_class(IMPERIAL, seed=1),
+                                BeachheadAgent(SOLOMANI, seed=2),
+                                rng=random.Random(seed))
+                for _ in range(18):
+                    engine.play_turn()
+                    peak = max(peak, sum(
+                        u.current for u in state.surface.values()
+                        if u.side == IMPERIAL and u.carrier is None
+                        and isinstance(u.location, int)))
+                stranded += sum(u.current for u in state.surface.values()
+                                if u.side == IMPERIAL and not u.dead
+                                and u.location == OUT_SYSTEM)
+            return peak, stranded / 4
+
+        new_peak, new_stranded = peak_and_stranded(HeuristicAgent)
+        old_peak, old_stranded = peak_and_stranded(BeachheadAgent)
+        self.assertGreater(new_peak, old_peak * 1.5)
+        self.assertLess(new_stranded, old_stranded)
+
     def test_the_scripted_doctrine_goes_for_the_starports(self):
         """It should land nearer a starport than the open doctrine does.
 
@@ -1124,6 +1274,63 @@ class TestPlaythrough(unittest.TestCase):
 
         self.assertLess(beachhead(ScriptedAgent), beachhead(HeuristicAgent),
                         "the scripted plan ignored the starports")
+
+    def test_the_doctrine_lands_the_army_and_not_a_fraction_of_it(self):
+        """The invasion's first job, and the one the first doctrine failed.
+
+        The Imperium owns 4040 combat factors and has to put them on Terra
+        through two surviving transport squadrons.  Landing six hundred of them
+        and leaving the rest out-system is not a beachhead, it is a hostage.
+        """
+        state = new_game(seed=141)
+        engine = Engine(state, HeuristicAgent(IMPERIAL, seed=1),
+                        HeuristicAgent(SOLOMANI, seed=2), rng=random.Random(141))
+        peak = 0.0
+        for _ in range(20):
+            engine.play_turn()
+            peak = max(peak, sum(u.current for u in state.surface.values()
+                                 if u.side == IMPERIAL and u.carrier is None
+                                 and isinstance(u.location, int)))
+        stranded = sum(u.current for u in state.surface.values()
+                       if u.side == IMPERIAL and not u.dead
+                       and u.location == OUT_SYSTEM)
+        self.assertGreater(peak, 1200, "most of the army never landed")
+        self.assertLess(stranded, 1200, "most of the army never sailed")
+
+    def test_the_doctrine_lands_where_a_base_can_follow(self):
+        """A lodgement that cannot hold a base is a lodgement out of supply.
+
+        "A base may not be landed in a tundra or ice hex", an Imperial unit
+        needs one within five hexes to be in supply, and a unit out of supply
+        may not fire.  The score refuses those hexes outright rather than
+        pricing them, which is also what keeps the invasion off the islands: a
+        hex with no room around it cannot hold four thousand factors at a
+        thousand to the hex.
+        """
+        state = new_game(seed=142)
+        agent = HeuristicAgent(IMPERIAL, seed=1)
+        engine = Engine(state, agent, HeuristicAgent(SOLOMANI, seed=2),
+                        rng=random.Random(142))
+        for _ in range(6):
+            engine.play_turn()
+        geo = state.geometry
+        self.assertIsNotNone(agent._beachhead)
+        self.assertNotIn(geo.terrain[agent._beachhead],
+                         (terra.TUNDRA, terra.PERMANENT_ICE, terra.SEASONAL_ICE))
+        room = sum(1 for c in geo.within(agent._beachhead, 2) if c in geo.land)
+        self.assertGreaterEqual(room, 5, "landed on a rock")
+
+    def test_the_supply_net_is_not_one_base_landed_six_times(self):
+        state = new_game(seed=143)
+        engine = Engine(state, HeuristicAgent(IMPERIAL, seed=1),
+                        HeuristicAgent(SOLOMANI, seed=2), rng=random.Random(143))
+        for _ in range(16):
+            engine.play_turn()
+        sites = [b.location for b in state.bases.values()
+                 if isinstance(b.location, int)]
+        if len(sites) > 1:
+            self.assertGreater(len(set(sites)), 1,
+                               "every base landed in the same hex")
 
     def test_a_game_is_reproducible_from_its_seed(self):
         def run():

@@ -102,6 +102,20 @@ class Agent:
         """
         return {}
 
+    def bombardment_target(self, state: GameState, side: str, cell,
+                           candidates: list, engine):
+        """Which unit in a bombarded hex the fire is directed at.
+
+        "Each surface unit must be bombarded separately; two or more surface
+        units may not be bombarded together", so the bombarding player picks
+        one, and the pick is a decision rather than a formality: a hex often
+        holds a 500-factor field army and a 20-factor planetary defence
+        division, and half of the bigger one is worth much less than all of the
+        smaller one.  The default is the biggest, which is what an engine with
+        no opinion should do.
+        """
+        return max(candidates, key=lambda u: (u.current, u.uid))
+
     def sdb_surface(self, state: GameState, side: str, engine) -> set:
         """Which hidden SDB wings come out of hiding this segment."""
         return set()

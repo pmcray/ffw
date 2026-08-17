@@ -28,7 +28,10 @@ Three numbers are printed per direction and they answer different questions:
   with no network.  A transfer number that does not beat this has demonstrated
   that one feature transfers, not that a network does.
 
-    python tools/transfer_check.py [games_per_side] [max_turns]
+    python tools/transfer_check.py [games_per_side] [max_turns] [seed]
+
+The seed picks the block of games, so a result can be confirmed on a block it
+was not found on -- which is the only way to tell a finding from a coincidence.
 """
 
 from __future__ import annotations
@@ -139,18 +142,19 @@ def correlation(a, b) -> float:
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def main(games=12, max_turns=18):
+def main(games=12, max_turns=18, seed=900):
     start = time.time()
     print("== collecting positions ==", flush=True)
     data = {}
     for name in ("ffw", "ie"):
-        rows, labels = collect(name, games, max_turns, seed=900)
+        rows, labels = collect(name, games, max_turns, seed=seed)
         data[name] = (rows, labels)
         print("   %-4s %4d positions from %d games   %4.0fs"
               % (name, len(rows), games, time.time() - start), flush=True)
 
     margin_slot = FEATURE_NAMES.index("score_margin")
-    report = {"games": games, "max_turns": max_turns, "directions": {}}
+    report = {"games": games, "max_turns": max_turns, "seed": seed,
+              "directions": {}}
 
     # A label column with no variance makes every correlation involving it
     # zero by construction, and a zero that means "undefined" reads exactly
@@ -210,4 +214,5 @@ def main(games=12, max_turns=18):
 
 if __name__ == "__main__":
     main(int(sys.argv[1]) if len(sys.argv) > 1 else 12,
-         int(sys.argv[2]) if len(sys.argv) > 2 else 18)
+         int(sys.argv[2]) if len(sys.argv) > 2 else 18,
+         int(sys.argv[3]) if len(sys.argv) > 3 else 900)
