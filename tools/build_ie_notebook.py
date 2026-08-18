@@ -322,20 +322,154 @@ for name, s in (('no bombardment', quiet), ('the doctrine', loud)):
              len(s.geometry.urban) - len(s.solomani_urban()),
              len([u for u in s.naval.values() if u.side == IMPERIAL])))"""),
 
-md("""## 6. Where to go next
+md("""## 6. Playing it yourself
 
-- **A human interface.** `ffw` has one (`ffw/agents/human.py`) and this game
-  does not, so the invasion can be watched but not yet played. The decisions a
-  human would want are already enumerated in `ie/agents/base.py`.
-- **Training.** `ffw/training.py`'s cross-entropy doctrine search optimises a
-  named weight vector against a fixed or co-evolving opponent, and this game's
-  weights have the same shape. `strategy/adapter.py` is the layer that would
-  let it drive either game.
+`ie/agents/human.py` keeps the doctrine as its staff work and asks you only for
+the decisions that decide the campaign: where the lodgement goes, what the
+fleet bombards, where each stack marches, whether to buy a replacement wave.
+Everything else — loading sixty transports, allocating fire inside a hex,
+hiding guerrillas — is left to the staff, and a callback that returns `None`
+defers any single decision back to them. So you can take one decision a turn
+and leave the rest alone."""),
+
+code("""from ie.agents import HumanAgent
+from ie.agents.human import summarise
+
+def text_commander(request):
+    \"\"\"A console interface for HumanAgent. Enter alone follows the staff.\"\"\"
+    kind = request['kind']
+    if kind == 'lodgement':
+        print('\\nTurn %d: choose the lodgement' % request['turn'])
+        for i, d in enumerate(request['detail']):
+            mark = ' <- staff recommends' if d['cell'] == request['recommended'] else ''
+            print('  %2d) hex %3d %-9s %5.1fN %6.1fE  %2d cities within 7, '
+                  '%2.0f gun factors, %4.0f Solomani within 3%s'
+                  % (i, d['cell'], d['terrain'], d['lat'], d['lon'],
+                     d['cities_within_7'], d['gun_factors'],
+                     d['solomani_within_3'], mark))
+        raw = input('choice [enter = follow the staff]: ').strip()
+        return request['options'][int(raw)] if raw.isdigit() else None
+    if kind == 'bombardment':
+        print('\\nTurn %d: %.0f bombardment factors available'
+              % (request['turn'], request['factors_available']))
+        for i, d in enumerate(request['detail']):
+            print('  %2d) hex %3d  %4.0f Solomani, %d batteries, '
+                  '%2.0f factors of return fire'
+                  % (i, d['cell'], d['solomani'], len(d['batteries']),
+                     d['return_fire']))
+        raw = input('targets, comma separated [enter = follow the staff]: ').strip()
+        if not raw:
+            return None
+        try:
+            return [request['options'][int(part)] for part in raw.split(',')]
+        except (ValueError, IndexError):
+            return None
+    if kind == 'move':
+        print('\\nTurn %d: %.0f factors at hex %d%s'
+              % (request['turn'], request['strength'], request['origin'],
+                 '' if request['in_supply'] else '  (OUT OF SUPPLY)'))
+        for i, d in enumerate(request['detail']):
+            mark = ' <- staff' if d['cell'] == request['recommended'] else ''
+            print('  %2d) hex %3d %-9s %d mp, garrisons %d, %4.0f enemy%s'
+                  % (i, d['cell'], d['terrain'], d['cost'], d['garrisons'],
+                     d['solomani'], mark))
+        print('   h) hold')
+        raw = input('choice [enter = follow the staff]: ').strip()
+        if raw == 'h':
+            return 'hold'
+        return request['options'][int(raw)] if raw.isdigit() else None
+    if kind == 'replacements':
+        raw = input('\\nBuy a replacement wave? It costs a victory point, and '
+                    'you have %d [y/N]: ' % request['victory_points']).strip()
+        return 1 if raw.lower().startswith('y') else 0
+    return None
+
+print('Ready. Run the next cell to take command of the invasion.')"""),
+
+code("""def play_as(side=IMPERIAL, turns=6, seed=99, ask=text_commander):
+    board = new_game(seed=seed)
+    human = HumanAgent(side, ask=ask, seed=1)
+    staff = HeuristicAgent(SOLOMANI if side == IMPERIAL else IMPERIAL, seed=2)
+    order = (human, staff) if side == IMPERIAL else (staff, human)
+    engine = Engine(board, order[0], order[1], rng=random.Random(seed))
+    for _ in range(turns):
+        engine.play_turn()
+        print(summarise(board))
+        if board.game_over:
+            break
+    return board, human
+
+# board, me = play_as(IMPERIAL, turns=8)"""),
+
+md("""Uncomment the last line to take command. The first few turns ask you
+almost nothing — the army is still out-system and there is nothing ashore to
+move — and then the lodgement question arrives, which is the one that decides
+the rest. Landing is not the hard part of this game; being somewhere a base can
+follow you to is.
+
+To play the defence instead, `play_as(SOLOMANI)`: you get the field army's
+movement and the decision of when to bring the boats up."""),
+
+md("""## 7. Training the doctrine
+
+The weights above are hand-tuned, which is a polite way of saying they are one
+person's guesses measured a few at a time. `strategy/search.py` is the
+cross-entropy search *Fifth Frontier War* uses, pointed at whichever game the
+adapter names — one loop rather than two to keep in step.
+
+Two things differ from the other game's training and both are forced by this
+one's shape. *Fifth Frontier War* pairs games by swapping seats; here the
+Imperium always attacks, so a comparison pairs two weight vectors on the **same**
+seat against the same opponent on the same seeds. And territory alone is a poor
+signal in a game where most candidates take none of it — the search would spend
+its generations looking at a flat field of zeros — so the training objective is
+territory plus attrition, while verification uses territory alone, because
+territory is what the rules score.
+
+The run below is a demonstration, not a training run: two generations of four
+candidates at one game each. A real run is `python tools/train_ie.py`."""),
+
+code("""from strategy import train, paired_advantage, doctrine_for
+
+t0 = time.time()
+defaults, _cls = doctrine_for('ie')
+best, log = train('ie', side=IMPERIAL, generations=2, population=4, elite=2,
+                  games=1, max_turns=14, seed=1, workers=1,
+                  progress=lambda g, mean, top, inc: print(
+                      '  generation %d  mean %+.3f  best %+.3f  incumbent %+.3f'
+                      % (g, mean, top, inc)))
+print('%.0fs' % (time.time() - t0))
+print()
+for name in sorted(defaults):
+    if abs(best[name] - defaults[name]) > 0.05:
+        print('  %-20s %6.2f -> %6.2f' % (name, defaults[name], best[name]))"""),
+
+md("""Read the **incumbent** column, not the other two. The centre only moves
+when the proposal beats it *on the same games*; plain cross-entropy moves every
+generation and walks downhill happily whenever the elite sample was lucky,
+which on a game this noisy is most generations.
+
+A run this small will not find anything, and saying so is the point: the
+verification below is what decides whether a set of numbers is an improvement
+or just a different set of numbers."""),
+
+code("""report = paired_advantage('ie', IMPERIAL, best, games=6, seed=99,
+                          max_turns=14, shape='margin', workers=1)
+print('%+.3f ± %.3f over %d games -> %s'
+      % (report['advantage'], report['stderr'], report['games'],
+         report['verdict']))"""),
+
+md("""## 8. Where to go next
+
 - **The garrison problem.** Section 4 is the honest state of it: the invasion
   works and the conquest does not. Anything that kills the Solomani field army
   faster — better odds selection, bombardment aimed at the units about to
   fight, a landing that splits the defence between two theatres — is aimed at
   the right target.
+- **Training against a moving target.** `strategy/search.py` optimises a weight
+  vector against a fixed opponent. Feeding each generation's best back in as
+  the opponent gives an arms race rather than one fixed hill, which is what
+  `ffw`'s league training does for the other game.
 - **The terrain.** Terra's coastlines are authored as data (longitude spans per
   latitude band, in `ie/terra.py`) rather than sampled off the scan, so they
   can be read and argued with. They are recognisable rather than accurate, and

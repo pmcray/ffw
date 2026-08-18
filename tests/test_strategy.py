@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np                                                   # noqa: E402
 
 from strategy import (DIMENSIONS, FEATURE_NAMES, adapter_for,        # noqa: E402
-                      adapters, describe, encode)
+                      adapters, describe, doctrine_for, encode, objective,
+                      paired_advantage, score_many, score_weights, train)
 
 
 class TestAdapters(unittest.TestCase):
@@ -261,3 +262,90 @@ class TestEncodingUnderPlay(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSearch(unittest.TestCase):
+    """The shared weight search, which is the other half of "shared layer".
+
+    A second copy of the cross-entropy loop in ``ie/`` would have been the
+    obvious way to give the second game a trainer, and would have left the
+    project two of them to keep in step.  What actually differs between the
+    games -- the weight dictionary, the class that turns one into an agent, and
+    how a finished game is scored -- is already behind the adapter.
+    """
+
+    def test_both_games_offer_a_doctrine_to_optimise(self):
+        for game in ("ffw", "ie"):
+            weights, agent_class = doctrine_for(game)
+            self.assertGreater(len(weights), 5)
+            self.assertTrue(all(isinstance(v, float) for v in weights.values()))
+            self.assertTrue(callable(agent_class))
+
+    def test_an_unknown_game_is_refused_rather_than_guessed(self):
+        with self.assertRaises(ValueError):
+            doctrine_for("dark_nebula")
+
+    def test_attrition_only_ever_adds_to_the_margin(self):
+        """The dense objective has to agree with the sparse one about winning.
+
+        Territory is what the rules score; attrition is there to give the
+        search a gradient where territory gives none.  If it could outweigh
+        territory the search would learn to grind rather than to win.
+        """
+        adapter = adapter_for("ie")
+        state = adapter.new_game(seed=41)
+        side = adapter.sides[0]
+        margin = objective(adapter, state, side, "margin")
+        both = objective(adapter, state, side, "margin+attrition")
+        self.assertGreaterEqual(both, margin - 1e-9)
+        self.assertLess(both - margin, 0.36)
+        with self.assertRaises(ValueError):
+            objective(adapter, state, side, "vibes")
+
+    def test_a_score_is_the_same_twice(self):
+        weights, _cls = doctrine_for("ie")
+        first = score_weights("ie", "imperial", weights, games=2, seed=3,
+                              max_turns=8, workers=1)
+        second = score_weights("ie", "imperial", weights, games=2, seed=3,
+                               max_turns=8, workers=1)
+        self.assertEqual(first, second)
+
+    def test_a_doctrine_paired_against_itself_has_no_advantage(self):
+        """Common random numbers, checked: identical weights, identical games.
+
+        Any drift here means the pairing is not actually pairing, and every
+        verdict the search produces would be measuring seeds.
+        """
+        weights, _cls = doctrine_for("ie")
+        report = paired_advantage("ie", "imperial", weights, against=weights,
+                                  games=3, seed=5, max_turns=8, workers=1)
+        self.assertEqual(report["advantage"], 0.0)
+        self.assertEqual(report["stderr"], 0.0)
+        self.assertEqual(report["verdict"], "indistinguishable")
+
+    def test_a_population_scores_the_same_in_a_batch_as_one_at_a_time(self):
+        weights, _cls = doctrine_for("ie")
+        other = dict(weights, exposure=0.9)
+        batch = score_many("ie", "imperial", [weights, other], games=2, seed=7,
+                           max_turns=8, workers=1)
+        one_at_a_time = [
+            score_weights("ie", "imperial", w, games=2, seed=7, max_turns=8,
+                          workers=1) for w in (weights, other)]
+        self.assertEqual(batch, one_at_a_time)
+
+    def test_the_search_runs_and_keeps_the_shape_of_the_doctrine(self):
+        weights, _cls = doctrine_for("ie")
+        best, log = train("ie", side="imperial", generations=1, population=3,
+                          elite=2, games=1, max_turns=8, seed=2, workers=1)
+        self.assertEqual(set(best), set(weights))
+        self.assertEqual(len(log), 1)
+        self.assertIn("incumbent", log[0])
+        self.assertEqual(len(log.curve("incumbent")), 1)
+
+    def test_the_search_never_moves_the_centre_downhill(self):
+        """The one thing plain cross-entropy gets wrong on a noisy game."""
+        _best, log = train("ie", side="imperial", generations=3, population=4,
+                           elite=2, games=1, max_turns=8, seed=4, workers=1)
+        curve = log.curve("incumbent")
+        for earlier, later in zip(curve, curve[1:]):
+            self.assertGreaterEqual(later, earlier - 1e-9)

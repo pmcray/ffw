@@ -67,6 +67,21 @@ WEIGHTS = {
 }
 
 
+#: Which weights each side's half of the doctrine actually reads.  A search
+#: training the Imperial doctrine that also varies ``break_garrisons`` is
+#: spending five of its nineteen dimensions on numbers that cannot change the
+#: game it is playing, and paying for them in samples.
+SIDE_WEIGHTS = {
+    IMPERIAL: ("urban_value", "starport_value", "defended", "elbow_room",
+               "supply_reach", "guerrilla_cover", "concentration",
+               "wave_appetite", "bases_ashore", "bombard_first",
+               "counter_battery", "assault_odds", "garrison_appetite",
+               "exposure"),
+    SOLOMANI: ("sdb_patience", "pd_vs_fleet", "guerrilla_boldness",
+               "reinforce_front", "break_garrisons"),
+}
+
+
 def weight_vector(weights=None):
     w = weights or WEIGHTS
     return [float(w.get(k, WEIGHTS[k])) for k in sorted(WEIGHTS)]
@@ -115,7 +130,7 @@ class HeuristicAgent(Agent):
                 total += unit.current
         return total
 
-    def _threat_map(self, state) -> dict:
+    def _threat_map(self, state, fighting: bool = False) -> dict:
         """``_threat`` for every hex at once, which is what the ground pass wants.
 
         Asked one hex at a time it is a loop over the Solomani army; asked for
@@ -123,6 +138,10 @@ class HeuristicAgent(Agent):
         comparisons a turn.  Pushed outwards from each Solomani unit instead it
         is one pass over the army, and the radius bands are cached on the
         geometry and shared between clones.
+
+        ``fighting`` counts what would arrive in the strength it would *fight*
+        in rather than its printed factors -- armour doubles, elite doubles
+        again.  A hex is held or lost on that number, not on the counter value.
         """
         geo = state.geometry
         out: dict = {}
@@ -131,8 +150,9 @@ class HeuristicAgent(Agent):
                 continue
             if not unit.cls.mobile or not isinstance(unit.location, int):
                 continue
+            weight = unit.combat_strength() if fighting else unit.current
             for cell in geo.within(unit.location, oob.MOVEMENT_POINTS):
-                out[cell] = out.get(cell, 0.0) + unit.current
+                out[cell] = out.get(cell, 0.0) + weight
         return out
 
     def _gun_map(self, state) -> dict:
@@ -416,11 +436,20 @@ class HeuristicAgent(Agent):
             if beach is not None:
                 value /= 1.0 + geo.distance(beach, cell) / 8.0
             scored[cell] = scored.get(cell, 0.0) + value
-        for cell in scored:
-            scored[cell] /= 1.0 + guns.get(cell, 0.0) / 4.0
         if not scored:
             return []
-        ranked = sorted(scored, key=lambda c: (-scored[c], c))
+        for cell in scored:
+            scored[cell] /= 1.0 + guns.get(cell, 0.0) / 4.0
+        # And, where there is a choice, shoot at what cannot shoot back.  A
+        # bombarding squadron stands in the hex it is bombarding and is fired on
+        # by every battery within three hexes at full factors; a hex outside
+        # every battery's reach costs the fleet nothing at all.  The field
+        # armies march on the lodgement and leave their cities to do it, so
+        # such targets usually exist -- and when they do not, the ranking below
+        # is the same one as before.
+        quiet = [c for c in scored if guns.get(c, 0.0) <= 0.0]
+        pool = quiet if quiet else list(scored)
+        ranked = sorted(pool, key=lambda c: (-scored[c], c))
         return ranked[:4]
 
     def bombardment_target(self, state, side, cell, candidates, engine):
@@ -946,7 +975,21 @@ class HeuristicAgent(Agent):
                  for u in units}
         planned = engine._stacking(IMPERIAL)
         field = (self._threat_map(state), self._gun_map(state))
-        threat = field[0]
+        # What could arrive and what is standing there are both counted in the
+        # strength they would fight in: "an elite armor unit would have its
+        # current strength doubled twice", and it does so whether it is
+        # attacking or being attacked.  Comparing printed factors on one side
+        # with printed factors on the other looks fair and is not -- it
+        # understates an armoured corps holding a hex by half, which is most of
+        # the Imperial army and the reason it would not disperse.
+        attacking = self._threat_map(state, fighting=True)
+        holding: dict = {}
+        for unit in state.surface.values():
+            if unit.side != IMPERIAL or unit.dead or unit.carrier is not None:
+                continue
+            if isinstance(unit.location, int):
+                holding[unit.location] = holding.get(unit.location, 0.0) \
+                    + unit.defence_strength()
         moves: dict = {}
         spent: set = set()
 
@@ -958,7 +1001,8 @@ class HeuristicAgent(Agent):
             factors of them can be in the hex at the end of their movement, so a
             stack near the limit is never facing worse than even odds.
             """
-            arriving = min(threat.get(cell, 0.0), float(oob.STACKING_LIMIT))
+            arriving = min(attacking.get(cell, 0.0),
+                           2.0 * float(oob.STACKING_LIMIT))
             return strength >= arriving * self.w["exposure"]
 
         # -- pass one: attacks worth making ----------------------------
@@ -986,7 +1030,9 @@ class HeuristicAgent(Agent):
                 have += unit.current
             if strength < want or not going:
                 continue
-            if not safe(cell, have):
+            arriving = holding.get(cell, 0.0) + sum(u.defence_strength()
+                                                    for u in going)
+            if not safe(cell, arriving):
                 continue          # winning the hex and losing the force in it
             for unit in going:
                 moves[unit.uid] = cell
@@ -1001,24 +1047,27 @@ class HeuristicAgent(Agent):
             here = unit.location
             best, best_score = here, self._post_score(
                 state, unit, here, 0, planned, solomani_zoc, occupied, field,
-                safe)
+                safe, holding)
             for cell, cost in costs[unit.uid].items():
                 if cell == here or cell not in geo.land or cell in occupied:
                     continue
                 if planned.get(cell, 0.0) + unit.current > oob.STACKING_LIMIT:
                     continue
                 score = self._post_score(state, unit, cell, cost, planned,
-                                         solomani_zoc, occupied, field, safe)
+                                         solomani_zoc, occupied, field, safe,
+                                         holding)
                 if score > best_score:
                     best, best_score = cell, score
             if best != here:
                 moves[unit.uid] = best
                 planned[here] = planned.get(here, 0.0) - unit.current
                 planned[best] = planned.get(best, 0.0) + unit.current
+                holding[here] = holding.get(here, 0.0) - unit.defence_strength()
+                holding[best] = holding.get(best, 0.0) + unit.defence_strength()
         return moves
 
     def _post_score(self, state, unit, cell, cost, planned, solomani_zoc,
-                    occupied, field, safe) -> float:
+                    occupied, field, safe, holding) -> float:
         """What a hex is worth to one unit, in cities and in risk.
 
         The safety term is a cliff and not a slope, deliberately.  Three cities
@@ -1035,7 +1084,10 @@ class HeuristicAgent(Agent):
         score = w["urban_value"] * w["garrison_appetite"] * 3.0 * \
             self._garrison_value(state, cell, solomani_zoc, occupied)
         score += w["concentration"] * min(friends, 600.0) / 200.0
-        if not safe(cell, friends + unit.current):
+        garrison = holding.get(cell, 0.0)
+        if unit.location == cell:
+            garrison -= unit.defence_strength()
+        if not safe(cell, garrison + unit.defence_strength()):
             score -= 20.0 * w["exposure"]
         if not self._in_supply_range(state, cell):
             # "A unit that is out of supply may not fire (attack) ... and is

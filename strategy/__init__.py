@@ -36,6 +36,12 @@ them on one game has learned something that means something in the other.
 
 from .adapter import GameAdapter, FFW, IE, adapters, adapter_for
 from .features import DIMENSIONS, FEATURE_NAMES, encode, describe
+from .search import (OBJECTIVES, TrainingLog, doctrine_for, objective,
+                     paired_advantage, score_many, score_weights, train,
+                     tunables)
 
 __all__ = ["GameAdapter", "FFW", "IE", "adapters", "adapter_for",
-           "DIMENSIONS", "FEATURE_NAMES", "encode", "describe"]
+           "DIMENSIONS", "FEATURE_NAMES", "encode", "describe",
+           "OBJECTIVES", "TrainingLog", "doctrine_for", "objective",
+           "paired_advantage", "score_many", "score_weights", "train",
+           "tunables"]

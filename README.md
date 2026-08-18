@@ -25,23 +25,26 @@ ffw/                      the game
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
 tests/test_ffw.py         164 tests, including the rulebook's worked examples
-tests/test_ie.py          122 tests for Invasion: Earth
-tests/test_strategy.py    24 tests for the shared cross-game layer
-strategy/                 shared feature encoding and game adapters
+tests/test_ie.py          129 tests for Invasion: Earth
+tests/test_strategy.py    32 tests for the shared layer and its search
+strategy/                 shared feature encoding, game adapters, weight search
+  search.py               the cross-entropy loop, pointed at either game
 ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
   hexmap.py               the Goldberg polyhedron: adjacency, distance, outlines
   viz.py                  Terra drawn as a sphere, and the space boxes beside it
   agents/heuristic.py     the doctrine, both sides
+  agents/human.py         the decisions a human is asked for, and the staff work
   agents/legacy.py        the doctrine it replaced, kept to measure against
 tools/                    data extraction, agent training, notebook generation
   ie_campaign.py          what became of an Invasion: Earth campaign, over seeds
+  train_ie.py             train and verify an Invasion: Earth doctrine
 ```
 
 ## Quick start
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 310 tests, about two minutes
+python -m unittest discover tests          # 325 tests, about three minutes
 jupyter notebook FifthFrontierWar.ipynb    # the Spinward Marches
 jupyter notebook InvasionEarth.ipynb       # Terra
 ```
@@ -726,7 +729,7 @@ War: one player commands the Imperial invasion force, the other the defence of
 the homeworld.
 
 ```bash
-python -m unittest tests.test_ie      # 122 tests
+python -m unittest tests.test_ie      # 129 tests
 python tools/ie_campaign.py           # what became of eight campaigns
 jupyter notebook InvasionEarth.ipynb  # look at it
 ```
@@ -935,6 +938,33 @@ five, so nothing but a transport can carry a 100-factor corps off Luna again. An
 army unloaded onto Luna is an army parked on Luna. The idea was implemented,
 measured, and removed; this paragraph is what is left of it.
 
+### Shoot at what cannot shoot back
+
+The third thing, and the one that turned out to be worth the most. A squadron
+on a bombardment mission is "placed on the map in the hex containing the surface
+unit it is to bombard" — which is also where every planetary defence unit within
+three hexes can fire on it at **full** bombardment factors, against the halved
+ones they would use on the close orbit box. A hex outside every battery's reach
+costs the fleet nothing at all.
+
+Such hexes usually exist, because the Solomani field armies march on the
+lodgement and leave their cities to do it. So the doctrine ranks its targets as
+before, and then takes only the quiet ones when there are any. Sixteen games of
+thirty turns, against the same defence, changing nothing else:
+
+| | before | after |
+|---|---|---|
+| cities taken | 1.1 ± 0.4 | **2.2 ± 0.7** |
+| squadrons left at turn 30 | 13.8 ± 1.7 | **25.8 ± 1.4** |
+| lift capacity left | 438 ± 146 | **982 ± 154** |
+| Solomani factors left | 2809 ± 185 | 2745 ± 207 |
+
+The last row is the one that makes the rest make sense: the fleet does about the
+same damage either way, and pays half as much for it. What it stops killing is
+the batteries — 21.8 left against 19.8 — which is a real cost, paid because a
+battery is worth twenty combat factors and the squadron trading itself for it is
+worth four bombardment factors a turn for the rest of the war.
+
 ### What the rewrite is worth
 
 `tools/ie_campaign.py` plays whole campaigns and reports what became of both
@@ -945,8 +975,8 @@ same seeds, same engine:
 
 | | old defence | new defence |
 |---|---|---|
-| **old attack** | 0.1 cities, 622 ashore, 2131 stranded, 24 squadrons left, 4195 Solomani factors | 0.2 cities, 898 ashore, 1951 stranded, 12 squadrons, 4484 factors |
-| **new attack** | **1.2 cities, 2418 ashore, 6 stranded, 33 squadrons, 2493 factors** | 0.8 cities, 1937 ashore, 269 stranded, 16 squadrons, 3040 factors |
+| **old attack** | 0.1 ± 0.1 cities, 622 ashore, 2131 stranded, 24 squadrons left, 4195 Solomani factors | 0.2 ± 0.2 cities, 898 ashore, 1951 stranded, 12 squadrons, 4484 factors |
+| **new attack** | **2.2 ± 0.5 cities, 2588 ashore, 90 stranded, 32 squadrons, 2881 factors** | 2.2 ± 0.7 cities, 2520 ashore, 121 stranded, 26 squadrons, 2745 factors |
 
 Read the rows and the invasion works: against the same defence, the army
 reaches Terra instead of a third of it reaching Terra, the fleet survives, and
@@ -958,18 +988,91 @@ next to captured cities to un-garrison them, costs the new attack a third of a
 city and five hundred Solomani factors it would otherwise have destroyed.
 
 **Where the doctrine stands:** it lands the whole army, wins the attrition
-exchange, and still garrisons about one city. The reason is worth stating
+exchange, and still garrisons about two cities of sixty-one. The reason is worth stating
 precisely, because it is not the reason this file gave before. Of the sixty-one
-cities, fifty-five to fifty-eight are ungarrisoned for the simplest possible
+cities, fifty-two to fifty-eight are ungarrisoned for the simplest possible
 reason — no Imperial unit is standing within one hex of them — and only one to
 four are blocked by a Solomani zone of control. The army cannot spread out to
 cover them: a hex is only worth standing on if what is standing there survives
 what can reach it, and while the Solomani field army is alive with ten movement
 points, that means stacks of five hundred factors, which is four or five stacks
-for the whole army and a dozen cities between them. Taking fifty-two needs the
-Solomani field army dead first, and at the rate the exchange runs — about a
-hundred factors a turn against a rebuild of one point per ungarrisoned city per
-turn — that is a longer war than the forty-eight turns the engine allows.
+for the whole army and a dozen cities between them. Twenty-six corps could
+cover the map between them; five stacks cannot.
+
+**And the war has a peak.** Playing on to forty-eight turns is *worse* than
+stopping at thirty — 1.7 ± 0.6 cities against 2.2 ± 0.7, with 3143 Solomani
+factors standing instead of 2745 and half the fleet gone. The Solomani draw one
+replacement point a turn for every ungarrisoned urban hex, which at two cities
+taken is sixty a turn, and once the fleet has thinned enough that bombardment
+no longer beats that rate the exchange reverses and the Imperium spends the
+back half of the war losing ground it took in the front half. Every doctrine
+measured here is measured at thirty turns for that reason, and the honest
+reading of the extra eighteen is that they are not a longer war, they are a
+slower defeat.
+
+### Playing it
+
+`ie/agents/human.py` keeps the doctrine as its staff work and asks a human only
+for the decisions that decide the campaign: where the lodgement goes, what the
+fleet bombards, where each stack marches, whether to buy a replacement wave, and
+— on the other side — when to bring the boats up. Orders arrive through a
+callback, so the same class serves the notebook, a text prompt or a test, and a
+callback that returns `None` hands that one decision back to the staff. A player
+can take one decision a turn and leave the rest alone.
+
+That fallback has to be exact, and there is a test that it is: a human agent
+whose callback always returns `None` plays a bit-identical game to the doctrine.
+Anything else and every measurement taken through the human interface would be
+measuring the interface.
+
+### Training it
+
+`strategy/search.py` is the cross-entropy search, pointed at whichever game the
+adapter names. A second copy of `ffw/training.py`'s loop in `ie/` would have
+been the obvious way to give the second game a trainer and would have left the
+project two of them to keep in step; what actually differs between the games is
+the weight dictionary, the class that turns one into an agent, and how a
+finished game is scored, and all three were already behind `GameAdapter`.
+
+Two things do differ from the other game's training, and both are forced:
+
+- **Pairing.** *Fifth Frontier War* pairs games by swapping seats. Here the
+  Imperium always attacks, so a comparison pairs two weight vectors on the
+  *same* seat against the same opponent on the same seeds. Still common random
+  numbers; just unable to also answer "did this player draw the better side".
+  There is a test that a doctrine paired against itself scores exactly zero,
+  because a pairing that drifts is measuring seeds.
+- **The objective.** Territory alone is a poor signal in a game where most
+  candidates take none of it — the search spends its generations looking at a
+  flat field of zeros — so training maximises territory plus attrition, capped
+  so attrition can never outweigh territory. Verification uses territory alone,
+  because territory is what the rules score.
+
+```bash
+python tools/train_ie.py                    # train the Imperial doctrine
+python tools/train_ie.py --side solomani
+python tools/train_ie.py --verify           # re-check what is committed
+```
+
+Nothing is committed unless verification clears two standard errors on games
+the search never saw, and **nothing has been**. Two runs — eight generations of
+ten candidates, three games each and then five — both improved their own
+training score (−0.83 to −0.79, and −0.90 to −0.82) and both verified as
+*indistinguishable*: `+0.004 ± 0.015` and `+0.010 ± 0.017` over sixteen paired
+games. On the margin scale one city is about `0.033`, so those are point
+estimates of a fifth of a city with error bars that comfortably contain zero.
+
+That is worth stating plainly next to what is above it. Eight generations of
+weight search moved nothing that survived contact with a fresh block of seeds;
+one rule about where to point the guns doubled the cities taken. The weights
+are not where this doctrine's remaining problems live, and a search over them
+cannot find that out — it can only fail to improve them, which is what it did.
+
+The one structural improvement the searches did suggest is already in: the
+first run varied all nineteen weights including the five only the Solomani half
+reads, spending a quarter of its dimensions on numbers that could not change
+the game it was playing. `strategy.tunables` now asks the doctrine which
+weights the side being trained actually reads.
 
 ## Transfer: one encoding, two games
 
@@ -1081,13 +1184,14 @@ In *Invasion: Earth*:
 - The Solomani doctrine deploys its guerrillas and builds its SDB wings by a
   fixed rule rather than by any scoring, so the eight guerrilla units and the
   quarterly wings are a constant of the game rather than a decision in it.
-- There is no human interface. *Fifth Frontier War* has one and this game does
-  not, so the invasion can be watched but not played. Every decision a human
-  would want is already enumerated in `ie/agents/base.py`; what is missing is
-  the asking.
-- There is no training loop either. The weights are named and hand-tuned, and
-  `ffw/training.py`'s cross-entropy search optimises a vector of exactly that
-  shape, but nothing has been pointed at this game yet.
+- The human interface asks for five kinds of decision and leaves the rest to
+  the doctrine. Loading transports, allocating fire inside a hex and hiding
+  guerrillas are not offered, on the grounds that a game which asked a player to
+  reload sixty transports would not be played twice — but they are decisions the
+  rules give a player, and a more patient interface would offer them.
+- No trained weights are committed for either side, because none have verified
+  as better. The search runs, the verification runs, and the answer so far is
+  that the coefficients are not where the remaining problems are.
 - Terra's coastlines are recognisable rather than accurate. They are authored
   as data — longitude spans per latitude band — so they can be read and argued
   with, which a colour threshold over a scan could not be, but nobody should

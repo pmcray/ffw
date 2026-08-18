@@ -26,7 +26,7 @@ from ie.state import (BOMBARDMENT, CLOSE_ORBIT, DEEP_SPACE,          # noqa: E40
                       SOLOMANI, VICTORY_URBAN_THRESHOLD, Base, GameState,
                       enemy_of)
 from ie.agents import (Agent, BeachheadAgent, HeuristicAgent,        # noqa: E402
-                       RandomAgent, ScriptedAgent)
+                       HumanAgent, RandomAgent, ScriptedAgent)
 
 
 class TestGeodesicGrid(unittest.TestCase):
@@ -853,6 +853,37 @@ class TestBombardmentPooling(unittest.TestCase):
         self.assertGreater(battery.losses, 0)
         self.assertEqual(army.losses, 0)
 
+    def test_the_guns_prefer_a_target_that_cannot_answer(self):
+        """A bombarding squadron stands in the hex it is bombarding.
+
+        Every battery within three hexes then fires on it at *full* factors,
+        where fire at the close orbit box is halved -- so a target outside every
+        battery's reach costs the fleet nothing, and one inside costs it a
+        squadron a turn.  Given two targets of similar worth, the doctrine takes
+        the quiet one.
+        """
+        state = new_game(seed=63)
+        agent = HeuristicAgent(IMPERIAL, seed=1)
+        agent._beachhead = None
+        geo = state.geometry
+        guns = agent._gun_map(state)
+        covered = next(c for c in sorted(geo.land) if guns.get(c, 0) > 0)
+        quiet = next(c for c in sorted(geo.land) if guns.get(c, 0) == 0)
+
+        # one identical corps on each, so only the return fire separates them
+        for cell in (covered, quiet):
+            for unit in list(state.surface.values()):
+                if unit.location == cell and unit.side == SOLOMANI:
+                    del state.surface[unit.uid]
+        from ie.engine import _add_surface
+        corps = next(c for c, _n in oob.SOLOMANI_TROOPS if c.size == "corps")
+        for cell in (covered, quiet):
+            _add_surface(state, corps, SOLOMANI, cell)
+
+        targets = agent._bombardment_targets(state)
+        self.assertIn(quiet, targets)
+        self.assertNotIn(covered, targets)
+
     def test_a_battery_is_worth_more_to_the_doctrine_than_its_combat_factor(self):
         """Twenty factors that shoot at the fleet every turn and freeze a city.
 
@@ -1382,6 +1413,122 @@ class TestPlaythrough(unittest.TestCase):
                  rng=random.Random(5))
             return state.victory_points(), len(state.surface), len(state.naval)
         self.assertEqual(run(), run())
+
+
+class TestHumanInterface(unittest.TestCase):
+    """The decisions a human is offered, and what happens to the answers.
+
+    The contract is the one ``ffw.agents.human`` set: a callback that returns
+    ``None`` defers to the doctrine, so a player can take one decision a turn
+    and leave the rest to the staff.
+    """
+
+    def _play(self, ask, seed=81, turns=8, side=IMPERIAL):
+        state = new_game(seed=seed)
+        human = HumanAgent(side, ask=ask, seed=1)
+        other = HeuristicAgent(SOLOMANI if side == IMPERIAL else IMPERIAL,
+                               seed=2)
+        pair = ((human, other) if side == IMPERIAL else (other, human))
+        engine = Engine(state, pair[0], pair[1], rng=random.Random(seed))
+        for _ in range(turns):
+            engine.play_turn()
+        return state, human, engine
+
+    def test_a_silent_human_plays_exactly_the_doctrine(self):
+        """The fallback has to be exact or nothing measured with it means much."""
+        def played_by(agent_class, **kwargs):
+            state = new_game(seed=82)
+            engine = Engine(state, agent_class(IMPERIAL, seed=1, **kwargs),
+                            HeuristicAgent(SOLOMANI, seed=2),
+                            rng=random.Random(82))
+            for _ in range(10):
+                engine.play_turn()
+            return (state.victory_points(), len(state.garrisoned),
+                    sorted((u.location, round(u.current))
+                           for u in state.surface.values()
+                           if u.side == IMPERIAL and not u.dead
+                           and isinstance(u.location, int)))
+
+        self.assertEqual(played_by(HumanAgent, ask=lambda request: None),
+                         played_by(HeuristicAgent))
+
+    def test_the_human_is_asked_the_decisions_that_decide_the_campaign(self):
+        seen = []
+        self._play(lambda request: seen.append(request["kind"]))
+        self.assertIn("lodgement", seen)
+        self.assertIn("bombardment", seen)
+        self.assertIn("move", seen)
+
+    def test_the_human_chooses_the_lodgement(self):
+        chosen = {}
+
+        def ask(request):
+            if request["kind"] != "lodgement":
+                return None
+            self.assertIn(request["recommended"], request["options"])
+            # take the option the staff did not recommend
+            pick = next(c for c in request["options"]
+                        if c != request["recommended"])
+            chosen.setdefault("cell", pick)
+            return chosen["cell"]
+
+        state, human, _engine = self._play(ask, seed=83, turns=5)
+        self.assertTrue(chosen)
+        self.assertEqual(human._beachhead, chosen["cell"])
+
+    def test_the_human_moves_a_stack_and_can_hold_it(self):
+        moved = {}
+
+        def ask(request):
+            if request["kind"] != "move" or moved:
+                return None
+            moved["origin"] = request["origin"]
+            moved["target"] = request["options"][0]
+            return moved["target"]
+
+        state, _human, _engine = self._play(ask, seed=84, turns=9)
+        self.assertTrue(moved, "no stack was ever offered a move")
+        self.assertNotEqual(moved["origin"], moved["target"])
+
+        held = {}
+
+        def hold(request):
+            if request["kind"] != "move":
+                return None
+            held.setdefault("origin", request["origin"])
+            return "hold" if request["origin"] == held["origin"] else None
+
+        state, _human, _engine = self._play(hold, seed=84, turns=9)
+        self.assertTrue(held)
+
+    def test_the_human_picks_the_bombardment_target(self):
+        picked = {}
+
+        def ask(request):
+            if request["kind"] != "bombardment":
+                return None
+            picked["cell"] = request["options"][-1]
+            return [picked["cell"]]
+
+        state = new_game(seed=85)
+        human = HumanAgent(IMPERIAL, ask=ask, seed=1)
+        engine = Engine(state, human, HeuristicAgent(SOLOMANI, seed=2),
+                        rng=random.Random(85))
+        for _ in range(6):
+            engine.play_turn()
+        self.assertTrue(picked)
+        self.assertEqual(human._bombardment_targets(state), [picked["cell"]])
+
+    def test_the_defence_can_be_played_too(self):
+        seen = []
+
+        def ask(request):
+            seen.append(request["kind"])
+            return None
+
+        state, _human, _engine = self._play(ask, seed=86, turns=8,
+                                            side=SOLOMANI)
+        self.assertIn("move", seen)
 
 
 class TestDrawing(unittest.TestCase):
