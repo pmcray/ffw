@@ -9,7 +9,8 @@ The rules, map, charts and counter sheets were read out of
 `CT_G04_Traveller_Fifth_Frontier_War.pdf` in this repository.
 
 ```
-FifthFrontierWar.ipynb    the notebook: watch, play, train, compare
+FifthFrontierWar.ipynb    the Spinward Marches notebook: watch, play, train, compare
+InvasionEarth.ipynb       the Terra notebook: look, watch, read, compare
 ffw/                      the game
   hexmap.py               parsec geometry over Traveller CCRR hex numbers
   worlds/data/worlds.json 146 systems: starport, tech level, SDBs, battalions
@@ -24,10 +25,12 @@ ffw/                      the game
   agents/                 random, heuristic, scripted, lookahead, neural,
                           doctrine (written rules), human
 tests/test_ffw.py         164 tests, including the rulebook's worked examples
-tests/test_ie.py          116 tests for Invasion: Earth
+tests/test_ie.py          122 tests for Invasion: Earth
 tests/test_strategy.py    24 tests for the shared cross-game layer
 strategy/                 shared feature encoding and game adapters
 ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
+  hexmap.py               the Goldberg polyhedron: adjacency, distance, outlines
+  viz.py                  Terra drawn as a sphere, and the space boxes beside it
   agents/heuristic.py     the doctrine, both sides
   agents/legacy.py        the doctrine it replaced, kept to measure against
 tools/                    data extraction, agent training, notebook generation
@@ -38,8 +41,9 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 304 tests, about two minutes
-jupyter notebook FifthFrontierWar.ipynb
+python -m unittest discover tests          # 310 tests, about two minutes
+jupyter notebook FifthFrontierWar.ipynb    # the Spinward Marches
+jupyter notebook InvasionEarth.ipynb       # Terra
 ```
 
 Or from Python:
@@ -722,8 +726,9 @@ War: one player commands the Imperial invasion force, the other the defence of
 the homeworld.
 
 ```bash
-python -m unittest tests.test_ie      # 116 tests
+python -m unittest tests.test_ie      # 122 tests
 python tools/ie_campaign.py           # what became of eight campaigns
+jupyter notebook InvasionEarth.ipynb  # look at it
 ```
 
 ```python
@@ -767,6 +772,28 @@ threshold cannot. The cities are then trimmed to exactly the **61 urban hexes**
 rule 6 states, by ranking land hexes on how many urban regions claim them. That
 count is load-bearing: the Solomani draw one replacement point per ungarrisoned
 urban hex every turn, and the game ends when fewer than ten remain to them.
+
+### Drawing it
+
+The printed map tears the sphere along the icosahedron's edges and then tells
+the players to ignore the tears. A picture that reproduced the tears would be
+reproducing the compromise rather than the game, so `ie/viz.py` draws the
+planet as a planet: two orthographic hemispheres, one centred on the fighting
+and one on its antipode, so all 492 cells are on the page at once and adjacency
+across the limb is where the eye expects it.
+
+The cell outlines come from the dual construction that was already there and
+was throwing them away. A cell's corners are the centres of the geodesic
+triangles meeting at its vertex — five of them at the twelve pentagons and six
+everywhere else — so `hexmap.outline` now keeps them, sorted by angle in the
+tangent plane, because a polygon whose corners are not in order around it draws
+as a bow tie. A cell straddling the edge of the visible hemisphere has corners
+behind the planet; each one is walked along the great circle towards its own
+cell centre until it reaches the limb, which is where it would be seen from.
+
+Beside the globes is the part of this game that is not on the planet at all:
+the four space boxes, where the whole Imperial army starts and, in a bad game,
+most of it still is.
 
 ### What the rulebook makes testable
 
@@ -1054,6 +1081,17 @@ In *Invasion: Earth*:
 - The Solomani doctrine deploys its guerrillas and builds its SDB wings by a
   fixed rule rather than by any scoring, so the eight guerrilla units and the
   quarterly wings are a constant of the game rather than a decision in it.
+- There is no human interface. *Fifth Frontier War* has one and this game does
+  not, so the invasion can be watched but not played. Every decision a human
+  would want is already enumerated in `ie/agents/base.py`; what is missing is
+  the asking.
+- There is no training loop either. The weights are named and hand-tuned, and
+  `ffw/training.py`'s cross-entropy search optimises a vector of exactly that
+  shape, but nothing has been pointed at this game yet.
+- Terra's coastlines are recognisable rather than accurate. They are authored
+  as data — longitude spans per latitude band — so they can be read and argued
+  with, which a colour threshold over a scan could not be, but nobody should
+  navigate by the globe the notebook draws.
 
 ## Credits
 

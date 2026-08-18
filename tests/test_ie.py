@@ -10,6 +10,7 @@ asserted here rather than paraphrased.
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import sys
@@ -74,6 +75,47 @@ class TestGeodesicGrid(unittest.TestCase):
             cell = hexmap.nearest(lat, 0)
             self.assertGreaterEqual(len(hexmap.neighbours(cell)), 5)
             self.assertAlmostEqual(abs(hexmap.lat_lon(cell)[0]), 90, places=6)
+
+    def test_every_cell_has_an_outline_and_it_matches_its_neighbours(self):
+        """A cell has one corner per neighbour: five for the twelve, six else.
+
+        The corners are the centres of the geodesic triangles meeting at the
+        cell, so a disagreement between corner count and neighbour count would
+        mean the dual had been built two different ways.
+        """
+        counts = Counter()
+        for cell in hexmap.CELLS:
+            corners = hexmap.outline(cell)
+            counts[len(corners)] += 1
+            self.assertEqual(len(corners), len(hexmap.neighbours(cell)), cell)
+            for corner in corners:
+                self.assertAlmostEqual(
+                    math.sqrt(sum(v * v for v in corner)), 1.0, places=9)
+        self.assertEqual(counts[5], 12)
+        self.assertEqual(counts[6], hexmap.cell_count() - 12)
+
+    def test_an_outline_is_wound_around_its_own_cell(self):
+        """Corners in the wrong order draw a bow tie rather than a hexagon.
+
+        Two checks: every step around the outline turns the same way in the
+        tangent plane, and the corners average back to the cell's own centre.
+        """
+        for cell in (0, 100, 250, 491, min(hexmap.PENTAGONS)):
+            centre = hexmap.unit_vector(cell)
+            corners = hexmap.outline(cell)
+            angles = []
+            ref = (0.0, 0.0, 1.0) if abs(centre[2]) < 0.9 else (1.0, 0.0, 0.0)
+            east = hexmap._normalise(hexmap._cross(ref, centre))
+            north = hexmap._cross(centre, east)
+            for corner in corners:
+                angles.append(math.atan2(hexmap._dot(corner, north),
+                                         hexmap._dot(corner, east)))
+            steps = [(angles[(i + 1) % len(angles)] - a) % (2 * math.pi)
+                     for i, a in enumerate(angles)]
+            self.assertAlmostEqual(sum(steps), 2 * math.pi, places=6, msg=cell)
+            middle = hexmap._normalise(tuple(
+                sum(c[d] for c in corners) / len(corners) for d in range(3)))
+            self.assertGreater(hexmap._dot(middle, centre), 0.999, cell)
 
     def test_distance_is_symmetric_and_zero_on_self(self):
         pairs = [(0, 100), (17, 300), (250, 251)]
@@ -1340,6 +1382,83 @@ class TestPlaythrough(unittest.TestCase):
                  rng=random.Random(5))
             return state.victory_points(), len(state.surface), len(state.naval)
         self.assertEqual(run(), run())
+
+
+class TestDrawing(unittest.TestCase):
+    """The renderer, where it can be checked without looking at it.
+
+    Skipped rather than failed without matplotlib: drawing is not a dependency
+    of playing, and the rules tests have to run anywhere.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            from ie import viz
+        except ImportError as exc:                         # pragma: no cover
+            raise unittest.SkipTest("matplotlib not installed: %s" % exc)
+        cls.viz = viz
+
+    def test_a_snapshot_records_what_is_on_the_board(self):
+        state = new_game(seed=71)
+        engine = Engine(state, HeuristicAgent(IMPERIAL, seed=1),
+                        HeuristicAgent(SOLOMANI, seed=2), rng=random.Random(71))
+        for _ in range(8):
+            engine.play_turn()
+        frame = self.viz.snapshot(state)
+        self.assertEqual(frame.garrisoned, state.garrisoned)
+        self.assertEqual(frame.turn, state.turn)
+        for side in (IMPERIAL, SOLOMANI):
+            drawn = sum(sides.get(side, 0.0) for sides in frame.surface.values())
+            actual = sum(u.current for u in state.surface.values()
+                         if u.side == side and u.carrier is None and not u.dead
+                         and isinstance(u.location, int))
+            self.assertAlmostEqual(drawn, actual, places=6, msg=side)
+
+    def test_the_two_views_between_them_show_every_cell(self):
+        """Two hemispheres, chosen back to back, so nothing is off the page."""
+        state = new_game(seed=72)
+        near, far = self.viz.focus(state)
+        for a, b in zip(near, far):
+            self.assertAlmostEqual(a, -b, places=9)
+        seen = set()
+        for centre in (near, far):
+            for cell in hexmap.CELLS:
+                if hexmap._dot(hexmap.unit_vector(cell), centre) > 0:
+                    seen.add(cell)
+        # only cells exactly on the terminator can fall between the two
+        self.assertGreater(len(seen), hexmap.cell_count() - 12)
+
+    def test_a_hemisphere_hides_what_is_behind_the_planet(self):
+        state = new_game(seed=73)
+        centre = hexmap.unit_vector(0)
+        east, north = self.viz._basis(centre)
+        x, y, depth = self.viz._project(centre, centre, east, north)
+        self.assertAlmostEqual(x, 0.0, places=9)
+        self.assertAlmostEqual(y, 0.0, places=9)
+        self.assertAlmostEqual(depth, 1.0, places=9)
+        antipode = tuple(-v for v in centre)
+        self.assertLess(self.viz._project(antipode, centre, east, north)[2], 0)
+        # a cell over the limb has its corners pulled back onto it
+        for cell in hexmap.CELLS:
+            if -0.05 < hexmap._dot(hexmap.unit_vector(cell), centre) < 0.05:
+                for x, y in self.viz._clipped_outline(cell, centre, east, north):
+                    self.assertLessEqual(math.hypot(x, y), 1.0 + 1e-9)
+
+    def test_the_map_draws(self):
+        state = new_game(seed=74)
+        engine = Engine(state, HeuristicAgent(IMPERIAL, seed=1),
+                        HeuristicAgent(SOLOMANI, seed=2), rng=random.Random(74))
+        recorder = self.viz.GameRecorder()
+        for _ in range(4):
+            engine.play_turn()
+            recorder(state)
+        figure = self.viz.draw_map(state, recorder[-1])
+        self.assertEqual(len(figure.axes), 3)     # two globes and the panel
+        self.assertEqual(len(recorder), 4)
+        self.viz.plt.close("all")
 
 
 if __name__ == "__main__":

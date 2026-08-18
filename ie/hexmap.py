@@ -131,6 +131,44 @@ def _subdivide(frequency: int):
     return coords, triangles
 
 
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def _dot(a, b) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _outlines(coords, triangles):
+    """The corners of each cell, in order around it.
+
+    The dual construction gives one cell per geodesic *vertex*; the corners of
+    that cell are the centres of the triangles meeting at the vertex, which is
+    what makes the twelve pentagons pentagons.  They come out of the
+    subdivision in no particular order, so they are sorted by angle in the
+    tangent plane at the cell's own centre -- a polygon whose corners are not
+    in order around it draws as a bow tie.
+    """
+    incident: list[list] = [[] for _ in coords]
+    for tri in triangles:
+        middle = _normalise(tuple(sum(coords[v][d] for v in tri) / 3.0
+                                  for d in range(3)))
+        for vertex in tri:
+            incident[vertex].append(middle)
+    outlines = []
+    for cell, corners in enumerate(incident):
+        centre = coords[cell]
+        # any vector not parallel to the centre gives a tangent basis
+        ref = (0.0, 0.0, 1.0) if abs(centre[2]) < 0.9 else (1.0, 0.0, 0.0)
+        east = _normalise(_cross(ref, centre))
+        north = _cross(centre, east)
+        outlines.append(tuple(sorted(
+            corners, key=lambda p: math.atan2(_dot(p, north), _dot(p, east)))))
+    return outlines
+
+
 def _build():
     """The dual: one cell per geodesic vertex, adjacency from shared edges."""
     coords, triangles = _subdivide(FREQUENCY)
@@ -139,10 +177,10 @@ def _build():
         neighbours[a].update((b, c))
         neighbours[b].update((a, c))
         neighbours[c].update((a, b))
-    return coords, [sorted(n) for n in neighbours]
+    return coords, [sorted(n) for n in neighbours], _outlines(coords, triangles)
 
 
-_COORDS, _NEIGHBOURS = _build()
+_COORDS, _NEIGHBOURS, _OUTLINES = _build()
 
 #: Every cell on the map, in a stable order.  Cell ids are opaque: use
 #: ``lat_lon`` to place them and ``nearest`` to find them.
@@ -165,6 +203,15 @@ def neighbours(cell: int) -> tuple[int, ...]:
 
 def unit_vector(cell: int) -> tuple[float, float, float]:
     return _COORDS[cell]
+
+
+def outline(cell: int) -> tuple:
+    """The cell's corners as unit vectors, in order around it.
+
+    Five of them for the twelve pentagons and six for everything else, which is
+    the one visible consequence of Euler's formula on the finished map.
+    """
+    return _OUTLINES[cell]
 
 
 def lat_lon(cell: int) -> tuple[float, float]:
