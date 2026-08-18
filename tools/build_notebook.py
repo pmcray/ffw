@@ -12,6 +12,8 @@ import os
 
 import nbformat as nbf
 
+from notebook_bootstrap import CODE as BOOTSTRAP_CODE, MARKDOWN as BOOTSTRAP_MD
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "FifthFrontierWar.ipynb")
 
@@ -53,8 +55,11 @@ transcribed from the game map in the PDF; the combat results tables come from
 the chart sheet; the orders of battle come from the two order-of-battle charts.
 """),
 
+md(BOOTSTRAP_MD),
+
+code(BOOTSTRAP_CODE),
+
 code("""import sys, os, time, math, json, random
-sys.path.insert(0, os.path.abspath('.'))
 
 import numpy as np
 import matplotlib.pyplot as plt

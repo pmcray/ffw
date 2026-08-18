@@ -27,6 +27,7 @@ ffw/                      the game
 tests/test_ffw.py         164 tests, including the rulebook's worked examples
 tests/test_ie.py          129 tests for Invasion: Earth
 tests/test_strategy.py    32 tests for the shared layer and its search
+tests/test_notebooks.py   5 tests that the notebooks parse and are current
 strategy/                 shared feature encoding, game adapters, weight search
   search.py               the cross-entropy loop, pointed at either game
 ie/                       Invasion: Earth: geodesic Terra, tables, engine, agents
@@ -44,10 +45,16 @@ tools/                    data extraction, agent training, notebook generation
 
 ```bash
 pip install numpy matplotlib ipywidgets nbformat jupyter
-python -m unittest discover tests          # 325 tests, about three minutes
+python -m unittest discover tests          # 330 tests, about three minutes
 jupyter notebook FifthFrontierWar.ipynb    # the Spinward Marches
 jupyter notebook InvasionEarth.ipynb       # Terra
 ```
+
+Either notebook also opens on Colab on its own. The first cell fetches this
+repository and moves into it, because a notebook uploaded by itself has nothing
+to import and the resulting `ModuleNotFoundError: No module named 'ffw'` names
+the symptom rather than the cause. Run from a clone the same cell does nothing
+but confirm where it is.
 
 Or from Python:
 

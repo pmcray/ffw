@@ -16,6 +16,8 @@ import os
 
 import nbformat as nbf
 
+from notebook_bootstrap import CODE as BOOTSTRAP_CODE, MARKDOWN as BOOTSTRAP_MD
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "InvasionEarth.ipynb")
 
@@ -51,8 +53,11 @@ bombarded at all.
 
 Everything is driven by the `ie` package in this repository."""),
 
+md(BOOTSTRAP_MD),
+
+code(BOOTSTRAP_CODE),
+
 code("""import sys, os, time, math, random
-sys.path.insert(0, os.path.abspath('.'))
 
 import matplotlib.pyplot as plt
 
